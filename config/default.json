@@ -1,0 +1,23 @@
+{
+  "telegram": {
+    "rateLimit": {
+      "messagesPerMinute": 20,
+      "editThrottleMs": 500
+    }
+  },
+  "claude": {
+    "model": null,
+    "defaultWorkspace": "~/projects",
+    "timeout": 300000,
+    "inheritSettings": true
+  },
+  "sessions": {
+    "maxSessions": 10,
+    "persistPath": "./data/sessions.json"
+  },
+  "notifications": {
+    "defaultLevel": "status",
+    "onError": true,
+    "onComplete": true
+  }
+}
