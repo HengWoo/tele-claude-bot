@@ -201,7 +201,7 @@ export function formatToHtml(text: string): string {
     // Detect pipe table row: starts and ends with |, has content between
     const isPipeTableRow = /^\|.+\|$/.test(trimmedLine);
     // Detect separator row: |---|---|
-    const isSeparator = /^\|[\s:-]+\|[\s:-|]*$/.test(trimmedLine);
+    const isSeparator = isSeparatorRow(trimmedLine);
 
     if (isPipeTableRow || isSeparator) {
       if (!inPipeTable) {
