@@ -83,17 +83,19 @@ export async function streamToTelegram(
     }
 
     try {
+      logger.debug({ textLength: accumulatedText.length, preview: accumulatedText.slice(0, 100) }, "Editing message with HTML");
       await ctx.api.editMessageText(
         message.chat.id,
         message.message_id,
-        accumulatedText
+        accumulatedText,
+        { parse_mode: "HTML" }
       );
       lastEditTime = Date.now();
     } catch (error) {
       const err = error as Error;
       // Ignore "message is not modified" errors
       if (!err.message?.includes("message is not modified")) {
-        logger.warn({ error: err.message }, "Failed to edit message");
+        logger.warn({ error: err.message, text: accumulatedText.slice(0, 200) }, "Failed to edit message with HTML");
       }
     }
   };
@@ -119,7 +121,8 @@ export async function streamToTelegram(
         await ctx.api.editMessageText(
           message.chat.id,
           message.message_id,
-          accumulatedText
+          accumulatedText,
+          { parse_mode: "HTML" }
         );
       } catch (error) {
         const err = error as Error;

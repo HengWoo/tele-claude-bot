@@ -66,7 +66,7 @@ export async function handleApprovalCallback(ctx: Context): Promise<void> {
         const resolved = approvalQueue.resolve(id, true);
         if (resolved) {
           await ctx.answerCallbackQuery({ text: "Approved" });
-          await ctx.editMessageText("Approved");
+          await ctx.editMessageText("<b>\u2705 Approved</b>", { parse_mode: "HTML" });
         } else {
           await ctx.answerCallbackQuery({ text: "Approval already processed or expired" });
         }
@@ -77,7 +77,7 @@ export async function handleApprovalCallback(ctx: Context): Promise<void> {
         const resolved = approvalQueue.resolve(id, false);
         if (resolved) {
           await ctx.answerCallbackQuery({ text: "Denied" });
-          await ctx.editMessageText("Denied");
+          await ctx.editMessageText("<b>\u274C Denied</b>", { parse_mode: "HTML" });
         } else {
           await ctx.answerCallbackQuery({ text: "Approval already processed or expired" });
         }
@@ -106,7 +106,7 @@ export async function handleApprovalCallback(ctx: Context): Promise<void> {
         await ctx.answerCallbackQuery({
           text: `Approved ${pendingApprovals.length} pending tool use(s)`,
         });
-        await ctx.editMessageText(`Approved all (${pendingApprovals.length} tool uses)`);
+        await ctx.editMessageText(`<b>\u2705 Approved all</b> (${pendingApprovals.length} tool uses)`, { parse_mode: "HTML" });
         break;
       }
 

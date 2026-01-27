@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createChildLogger } from "../utils/logger.js";
+import { formatToHtml, truncateHtml } from "../utils/telegram-formatter.js";
 
 const execFileAsync = promisify(execFile);
 const logger = createChildLogger("tmux");
@@ -203,10 +204,13 @@ export function stripAnsi(text: string): string {
 /**
  * Format pane output for Telegram
  * - Strips ANSI codes
+ * - Converts to HTML formatting
  * - Preserves code blocks
  * - Handles line wrapping
+ * @param text - Raw text from tmux pane
+ * @param useHtml - Whether to use HTML formatting (default: true)
  */
-export function formatForTelegram(text: string): string {
+export function formatForTelegram(text: string, useHtml = true): string {
   let formatted = stripAnsi(text);
 
   // Remove excessive blank lines (more than 2 consecutive)
@@ -221,10 +225,16 @@ export function formatForTelegram(text: string): string {
   // Trim overall whitespace
   formatted = formatted.trim();
 
-  // Telegram has a 4096 character limit - truncate if needed
-  const MAX_LENGTH = 4000; // Leave some buffer
-  if (formatted.length > MAX_LENGTH) {
-    formatted = formatted.slice(0, MAX_LENGTH) + "\n\n... [truncated]";
+  if (useHtml) {
+    // Convert to HTML and safely truncate
+    formatted = formatToHtml(formatted);
+    formatted = truncateHtml(formatted, 4000);
+  } else {
+    // Plain text truncation
+    const MAX_LENGTH = 4000;
+    if (formatted.length > MAX_LENGTH) {
+      formatted = formatted.slice(0, MAX_LENGTH) + "\n\n... [truncated]";
+    }
   }
 
   return formatted;

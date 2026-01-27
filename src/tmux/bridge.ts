@@ -2,6 +2,7 @@ import { existsSync, writeFileSync, unlinkSync, readFileSync, readdirSync } from
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { sendKeys, capturePane, formatForTelegram, paneExists, getPaneInfo, stripAnsi } from "./index.js";
+import { formatToHtml, truncateHtml } from "../utils/telegram-formatter.js";
 import { createChildLogger } from "../utils/logger.js";
 
 const logger = createChildLogger("tmux-bridge");
@@ -29,6 +30,14 @@ export function getPendingFilePath(target: string): string {
  */
 export function getDoneFilePath(target: string): string {
   return `${CLAUDE_DIR}/tg-done-${sanitizeTarget(target)}`;
+}
+
+/**
+ * Get the response file path for a specific target
+ * This file contains the raw markdown response extracted from transcript
+ */
+export function getResponseFilePath(target: string): string {
+  return `${CLAUDE_DIR}/tg-response-${sanitizeTarget(target)}`;
 }
 
 export interface PendingRequest {
@@ -227,7 +236,8 @@ export class TmuxBridge {
     const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
     const doneFile = getDoneFilePath(target);
-    logger.debug({ target, timeout, requestId: pendingRequest.requestId, doneFile }, "Waiting for Claude completion");
+    const responseFile = getResponseFilePath(target);
+    logger.debug({ target, timeout, requestId: pendingRequest.requestId, doneFile, responseFile }, "Waiting for Claude completion");
 
     while (Date.now() - startTime < timeout) {
       // Check if done signal exists for this target
@@ -266,10 +276,26 @@ export class TmuxBridge {
           logger.debug("Done file unparseable, accepting for backward compatibility");
         }
 
-        // Give Claude a moment to finish writing to terminal
+        // Give Claude a moment to finish writing files
         await this.sleep(500);
 
-        // Capture final output - get more lines to ensure we have the full response
+        // Try to read response from response file (contains raw markdown from transcript)
+        if (existsSync(responseFile)) {
+          try {
+            const rawResponse = readFileSync(responseFile, "utf-8").trim();
+            logger.debug({ responseLength: rawResponse.length, preview: rawResponse.slice(0, 200) }, "Read response from transcript file");
+            if (rawResponse) {
+              // Convert markdown to Telegram HTML and truncate
+              const htmlResponse = formatToHtml(rawResponse);
+              return truncateHtml(htmlResponse, 4000);
+            }
+          } catch (error) {
+            logger.warn({ error: (error as Error).message }, "Failed to read response file");
+          }
+        }
+
+        // Fallback: capture terminal output if response file not available
+        logger.debug("Response file not available, falling back to terminal capture");
         const output = await capturePane(target, 1000);
         logger.debug({ outputLength: output.length, outputLines: output.split("\n").length }, "Captured pane after done signal");
         return this.parseClaudeResponse(output, startLineCount, userMessage);
@@ -475,12 +501,16 @@ export class TmuxBridge {
   private cleanupMarkerFiles(target: string): void {
     const pendingFile = getPendingFilePath(target);
     const doneFile = getDoneFilePath(target);
+    const responseFile = getResponseFilePath(target);
     try {
       if (existsSync(pendingFile)) {
         unlinkSync(pendingFile);
       }
       if (existsSync(doneFile)) {
         unlinkSync(doneFile);
+      }
+      if (existsSync(responseFile)) {
+        unlinkSync(responseFile);
       }
     } catch (error) {
       logger.warn({ error: (error as Error).message, target }, "Failed to cleanup marker files");
@@ -496,7 +526,7 @@ export class TmuxBridge {
 
       const files = readdirSync(CLAUDE_DIR);
       for (const file of files) {
-        if (file.startsWith("tg-pending-") || file.startsWith("tg-done-")) {
+        if (file.startsWith("tg-pending-") || file.startsWith("tg-done-") || file.startsWith("tg-response-")) {
           try {
             unlinkSync(`${CLAUDE_DIR}/${file}`);
             logger.debug({ file }, "Cleaned up stale marker file");
