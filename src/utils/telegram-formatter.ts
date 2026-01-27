@@ -79,9 +79,8 @@ export function formatToHtml(text: string): string {
   let inTable = false;
 
   for (const line of lines) {
-    // Detect table lines (box-drawing chars or markdown table pipes)
-    const isTableLine = /[│┌┐└┘├┤┬┴┼─═║╔╗╚╝╠╣╦╩╬]/.test(line) ||
-                        (/\|/.test(line) && line.split("|").length > 2);
+    // Detect table lines (box-drawing chars only - not markdown pipes which have formatting inside)
+    const isTableLine = /[│┌┐└┘├┤┬┴┼─═║╔╗╚╝╠╣╦╩╬]/.test(line);
 
     if (isTableLine) {
       if (!inTable) {
@@ -91,7 +90,7 @@ export function formatToHtml(text: string): string {
       // Clean the line for display
       let cleaned = line
         .replace(/[┌┐└┘├┤┬┴┼─═╔╗╚╝╠╣╦╩╬]/g, "")
-        .replace(/[│|]/g, " │ ")
+        .replace(/[│]/g, " │ ")
         .replace(/ +/g, " ")
         .trim();
       if (cleaned && !/^[│\s]*$/.test(cleaned)) {
