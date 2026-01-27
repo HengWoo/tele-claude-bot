@@ -9,6 +9,8 @@ import {
   type SessionManager,
   type ClaudeBridge,
 } from "./handlers/message.js";
+import { registerCommands } from "./handlers/commands.js";
+import { SessionManager as RealSessionManager } from "./sessions/manager.js";
 
 const logger = createChildLogger("bot");
 
@@ -147,46 +149,7 @@ bot.command("status", async (ctx) => {
   );
 });
 
-/**
- * Handle text messages
- */
-bot.on("message:text", async (ctx) => {
-  // Skip if it's a command (already handled)
-  if (ctx.message.text.startsWith("/")) {
-    return;
-  }
-
-  if (!sessionManager || !claudeBridge) {
-    await ctx.reply("Bot is still initializing. Please try again in a moment.");
-    return;
-  }
-
-  await handleTextMessage(ctx, sessionManager, claudeBridge);
-});
-
-/**
- * Handle photo messages
- */
-bot.on("message:photo", async (ctx) => {
-  if (!sessionManager || !claudeBridge) {
-    await ctx.reply("Bot is still initializing. Please try again in a moment.");
-    return;
-  }
-
-  await handlePhotoMessage(ctx, sessionManager, claudeBridge);
-});
-
-/**
- * Handle document messages
- */
-bot.on("message:document", async (ctx) => {
-  if (!sessionManager || !claudeBridge) {
-    await ctx.reply("Bot is still initializing. Please try again in a moment.");
-    return;
-  }
-
-  await handleFileMessage(ctx, sessionManager, claudeBridge);
-});
+// Message handlers are registered in registerMessageHandlers() after command handlers
 
 /**
  * Error handler
@@ -211,14 +174,68 @@ bot.catch((err) => {
 });
 
 /**
+ * Register message handlers (must be called AFTER command handlers)
+ */
+function registerMessageHandlers(): void {
+  // Handle text messages
+  bot.on("message:text", async (ctx) => {
+    const text = ctx.message.text;
+
+    // Skip if it's a command (already handled by command handlers)
+    if (text.startsWith("/")) {
+      return;
+    }
+
+    if (!sessionManager || !claudeBridge) {
+      await ctx.reply("Bot is still initializing. Please try again in a moment.");
+      return;
+    }
+
+    await handleTextMessage(ctx, sessionManager, claudeBridge);
+  });
+
+  // Handle photo messages
+  bot.on("message:photo", async (ctx) => {
+    if (!sessionManager || !claudeBridge) {
+      await ctx.reply("Bot is still initializing. Please try again in a moment.");
+      return;
+    }
+
+    await handlePhotoMessage(ctx, sessionManager, claudeBridge);
+  });
+
+  // Handle document messages
+  bot.on("message:document", async (ctx) => {
+    if (!sessionManager || !claudeBridge) {
+      await ctx.reply("Bot is still initializing. Please try again in a moment.");
+      return;
+    }
+
+    await handleFileMessage(ctx, sessionManager, claudeBridge);
+  });
+
+  logger.info("Message handlers registered");
+}
+
+/**
  * Initialize the bot with session manager and Claude bridge
  */
 export function initializeBot(
   manager: SessionManager,
-  bridge: ClaudeBridge
+  bridge: ClaudeBridge,
+  realSessionManager?: RealSessionManager
 ): void {
   sessionManager = manager;
   claudeBridge = bridge;
+
+  // Register command handlers FIRST (order matters in grammY)
+  if (realSessionManager) {
+    registerCommands(bot, realSessionManager);
+  }
+
+  // Register message handlers AFTER commands
+  registerMessageHandlers();
+
   logger.info("Bot initialized with session manager and Claude bridge");
 }
 

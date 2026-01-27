@@ -5,6 +5,14 @@ import type { BotContext, NotificationLevel } from "../types.js";
 import { SessionManager } from "../sessions/manager.js";
 import { createChildLogger } from "../utils/logger.js";
 import { getConfig } from "../config.js";
+import { getTmuxBridge } from "../tmux/bridge.js";
+import {
+  listPanes,
+  listSessions,
+  findClaudePanes,
+  validateTarget,
+  isTmuxAvailable,
+} from "../tmux/index.js";
 
 const logger = createChildLogger("command-handler");
 
@@ -400,25 +408,93 @@ export async function handleNotifyCommand(
 }
 
 /**
- * Handle /attach - Attach to local session (v2 placeholder)
+ * Handle /attach <target> - Attach to a tmux pane running Claude
+ * Target format: session:window.pane (e.g., "1:0.0", "dev:2.1")
  */
 export async function handleAttachCommand(
   ctx: BotContext,
   _sessionManager: SessionManager
 ): Promise<void> {
   const userId = ctx.from?.id;
+  const args = parseArgs(ctx.message?.text);
 
-  logger.debug({ userId }, "Attach command");
+  logger.debug({ userId, args }, "Attach command");
 
-  await ctx.reply(
-    "Local session attachment coming soon!\n\n" +
-    "This feature will allow you to connect to a Claude session " +
-    "running locally on your machine."
-  );
+  // Check if tmux is available
+  const tmuxAvailable = await isTmuxAvailable();
+  if (!tmuxAvailable) {
+    await ctx.reply(
+      "tmux is not running or no sessions found.\n\n" +
+      "Start a tmux session with Claude first:\n" +
+      "```\ntmux new -s myproject\nclaude\n```"
+    );
+    return;
+  }
+
+  if (!args) {
+    // Show available panes
+    const claudePanes = await findClaudePanes();
+    const allPanes = await listPanes();
+
+    let message = "Usage: /attach <target>\n\n";
+    message += "Target format: session:window.pane\n";
+    message += "Example: /attach 1:0.0\n\n";
+
+    if (claudePanes.length > 0) {
+      message += "Panes running Claude:\n";
+      for (const pane of claudePanes) {
+        message += `  ${pane.target}${pane.active ? " (active)" : ""}\n`;
+      }
+    } else {
+      message += "No panes currently running Claude.\n";
+    }
+
+    if (allPanes.length > 0 && claudePanes.length === 0) {
+      message += "\nAll available panes:\n";
+      for (const pane of allPanes.slice(0, 10)) {
+        message += `  ${pane.target} - ${pane.command}\n`;
+      }
+      if (allPanes.length > 10) {
+        message += `  ... and ${allPanes.length - 10} more\n`;
+      }
+    }
+
+    await ctx.reply(message);
+    return;
+  }
+
+  const target = args;
+
+  // Validate target format
+  if (!validateTarget(target)) {
+    await ctx.reply(
+      `Invalid target format: "${target}"\n\n` +
+      "Expected format: session:window.pane\n" +
+      "Examples: 1:0.0, dev:2.1, myproject:0.0"
+    );
+    return;
+  }
+
+  const bridge = getTmuxBridge();
+
+  try {
+    await bridge.attach(target);
+    logger.info({ userId, target }, "Attached to tmux pane");
+
+    await ctx.reply(
+      `Attached to tmux pane: ${target}\n\n` +
+      "You can now send messages to Claude.\n" +
+      "Use /detach to disconnect, /status to check connection."
+    );
+  } catch (error) {
+    const err = error as Error;
+    logger.warn({ userId, target, error: err.message }, "Failed to attach");
+    await ctx.reply(`Failed to attach: ${err.message}`);
+  }
 }
 
 /**
- * Handle /detach - Detach from local session (v2 placeholder)
+ * Handle /detach - Detach from current tmux pane
  */
 export async function handleDetachCommand(
   ctx: BotContext,
@@ -428,11 +504,201 @@ export async function handleDetachCommand(
 
   logger.debug({ userId }, "Detach command");
 
-  await ctx.reply(
-    "Local session detachment coming soon!\n\n" +
-    "This feature will allow you to disconnect from a locally " +
-    "running Claude session."
-  );
+  const bridge = getTmuxBridge();
+  const currentTarget = bridge.getAttachedTarget();
+
+  if (!currentTarget) {
+    await ctx.reply("Not currently attached to any tmux pane.");
+    return;
+  }
+
+  bridge.detach();
+  logger.info({ userId, previousTarget: currentTarget }, "Detached from tmux pane");
+
+  await ctx.reply(`Detached from tmux pane: ${currentTarget}`);
+}
+
+/**
+ * Handle /list - List all tmux sessions and panes
+ */
+export async function handleListCommand(
+  ctx: BotContext,
+  _sessionManager: SessionManager
+): Promise<void> {
+  const userId = ctx.from?.id;
+
+  logger.debug({ userId }, "List command");
+
+  const tmuxAvailable = await isTmuxAvailable();
+  if (!tmuxAvailable) {
+    await ctx.reply("tmux is not running or no sessions found.");
+    return;
+  }
+
+  const sessions = await listSessions();
+  const panes = await listPanes();
+
+  if (sessions.length === 0) {
+    await ctx.reply("No tmux sessions found.");
+    return;
+  }
+
+  let message = "tmux Sessions:\n\n";
+
+  for (const session of sessions) {
+    message += `Session: ${session}\n`;
+    const sessionPanes = panes.filter((p) => p.session === session);
+    for (const pane of sessionPanes) {
+      const activeMarker = pane.active ? " *" : "";
+      message += `  ${pane.target} - ${pane.command}${activeMarker}\n`;
+    }
+    message += "\n";
+  }
+
+  message += "* = active pane";
+
+  await ctx.reply(message);
+}
+
+/**
+ * Handle /panes - List panes running Claude
+ */
+export async function handlePanesCommand(
+  ctx: BotContext,
+  _sessionManager: SessionManager
+): Promise<void> {
+  const userId = ctx.from?.id;
+
+  logger.debug({ userId }, "Panes command");
+
+  const tmuxAvailable = await isTmuxAvailable();
+  if (!tmuxAvailable) {
+    await ctx.reply("tmux is not running or no sessions found.");
+    return;
+  }
+
+  const claudePanes = await findClaudePanes();
+
+  if (claudePanes.length === 0) {
+    await ctx.reply(
+      "No panes running Claude found.\n\n" +
+      "Start Claude in a tmux pane:\n" +
+      "```\ntmux new -s myproject\nclaude\n```"
+    );
+    return;
+  }
+
+  const bridge = getTmuxBridge();
+  const currentTarget = bridge.getAttachedTarget();
+
+  // Create inline keyboard for quick attachment
+  const keyboard = new InlineKeyboard();
+
+  let message = "Panes running Claude:\n\n";
+
+  claudePanes.forEach((pane, index) => {
+    const isAttached = pane.target === currentTarget;
+    const marker = isAttached ? " [attached]" : "";
+    message += `${index + 1}. ${pane.target}${marker}\n`;
+    message += `   Session: ${pane.session}\n\n`;
+
+    // Add attach button if not already attached
+    if (!isAttached) {
+      keyboard.text(`Attach ${pane.target}`, `attach:${pane.target}`);
+      if ((index + 1) % 2 === 0) {
+        keyboard.row();
+      }
+    }
+  });
+
+  if (currentTarget) {
+    message += `\nCurrently attached to: ${currentTarget}`;
+  }
+
+  await ctx.reply(message, { reply_markup: keyboard });
+}
+
+/**
+ * Handle /status - Show current attachment status
+ */
+export async function handleStatusCommand(
+  ctx: BotContext,
+  sessionManager: SessionManager
+): Promise<void> {
+  const userId = ctx.from?.id;
+
+  logger.debug({ userId }, "Status command");
+
+  const bridge = getTmuxBridge();
+  const attachedTarget = bridge.getAttachedTarget();
+  const hasPending = bridge.hasPendingRequest();
+
+  const activeSession = await sessionManager.getActive();
+
+  let message = "Status:\n\n";
+
+  // tmux attachment status
+  if (attachedTarget) {
+    message += `tmux Target: ${attachedTarget}\n`;
+    message += `Status: ${hasPending ? "Processing request..." : "Ready"}\n\n`;
+  } else {
+    message += "tmux Target: Not attached\n";
+    message += "Use /attach <target> to connect to a Claude pane\n\n";
+  }
+
+  // Session info
+  if (activeSession) {
+    message += `Session: ${activeSession.name}\n`;
+    message += `Workspace: ${activeSession.workspace}\n`;
+    message += `Notify Level: ${activeSession.notifyLevel}\n`;
+  }
+
+  await ctx.reply(message);
+}
+
+/**
+ * Handle attach callback from inline keyboard
+ */
+export async function handleAttachCallback(
+  ctx: BotContext,
+  _sessionManager: SessionManager
+): Promise<void> {
+  const callbackData = ctx.callbackQuery?.data;
+  const userId = ctx.from?.id;
+
+  if (!callbackData?.startsWith("attach:")) {
+    return;
+  }
+
+  const target = callbackData.replace("attach:", "");
+
+  logger.debug({ userId, target }, "Attach callback");
+
+  const bridge = getTmuxBridge();
+
+  try {
+    await bridge.attach(target);
+
+    await ctx.answerCallbackQuery({
+      text: `Attached to ${target}`,
+    });
+
+    await ctx.editMessageText(
+      `Attached to tmux pane: ${target}\n\n` +
+      "You can now send messages to Claude.\n" +
+      "Use /detach to disconnect."
+    );
+
+    logger.info({ userId, target }, "Attached via callback");
+  } catch (error) {
+    const err = error as Error;
+    logger.warn({ userId, target, error: err.message }, "Failed to attach via callback");
+
+    await ctx.answerCallbackQuery({
+      text: `Error: ${err.message}`,
+      show_alert: true,
+    });
+  }
 }
 
 /**
@@ -467,14 +733,18 @@ export function registerCommands(
   // /notify <level> - Set notification level
   bot.command("notify", (ctx) => handleNotifyCommand(ctx, sessionManager));
 
-  // /attach and /detach - Local session attachment (v2)
+  // tmux commands
   bot.command("attach", (ctx) => handleAttachCommand(ctx, sessionManager));
   bot.command("detach", (ctx) => handleDetachCommand(ctx, sessionManager));
+  bot.command("list", (ctx) => handleListCommand(ctx, sessionManager));
+  bot.command("panes", (ctx) => handlePanesCommand(ctx, sessionManager));
+  bot.command("status", (ctx) => handleStatusCommand(ctx, sessionManager));
 
   // Callback query handlers for inline keyboards
   bot.callbackQuery(/^session:/, (ctx) => handleSessionCallback(ctx, sessionManager));
   bot.callbackQuery(/^kill_confirm:/, (ctx) => handleKillCallback(ctx, sessionManager));
   bot.callbackQuery("kill_cancel", (ctx) => handleKillCallback(ctx, sessionManager));
+  bot.callbackQuery(/^attach:/, (ctx) => handleAttachCallback(ctx, sessionManager));
 
   logger.info("Command handlers registered");
 }

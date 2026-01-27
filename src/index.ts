@@ -2,9 +2,10 @@ import "dotenv/config";
 import { initializeBot, startBot, stopBot } from "./bot.js";
 import { getConfig } from "./config.js";
 import { createSessionManager } from "./sessions/manager.js";
-import { spawnClaude, approvalQueue } from "./claude/bridge.js";
+import { approvalQueue } from "./claude/bridge.js";
 import { createChildLogger } from "./utils/logger.js";
 import type { Session } from "./types.js";
+import { getTmuxBridge } from "./tmux/bridge.js";
 
 const logger = createChildLogger("main");
 
@@ -49,79 +50,51 @@ process.on("uncaughtException", (error) => {
 
 /**
  * Claude bridge adapter that implements the ClaudeBridge interface
- * expected by the message handler
+ * expected by the message handler.
+ *
+ * This adapter uses the tmux bridge to inject messages into existing
+ * Claude Code sessions running in tmux panes.
  */
 function createClaudeBridgeAdapter() {
-  const activeSessions = new Map<string, boolean>();
+  const bridge = getTmuxBridge();
 
   return {
-    async *sendMessage(session: Session, message: string): AsyncGenerator<string> {
-      activeSessions.set(session.id, true);
+    async *sendMessage(
+      _session: Session,
+      message: string,
+      chatId?: number,
+      messageId?: number
+    ): AsyncGenerator<string> {
+      if (!bridge.isAttached()) {
+        yield "Not attached to any tmux pane.\n\nUse /attach <target> to connect to a Claude session.\nUse /panes to see available Claude panes.";
+        return;
+      }
 
       try {
         const config = getConfig();
-        const claude = spawnClaude(message, session, {
-          timeout: config.claude.timeout,
-          model: config.claude.model ?? undefined,
-        });
+        logger.info({ message: message.slice(0, 100) }, "Sending message via tmux bridge");
 
-        let currentText = "";
+        const response = await bridge.sendMessage(
+          message,
+          chatId ?? 0,
+          messageId ?? 0,
+          config.claude.timeout
+        );
 
-        // Listen for text events
-        const textPromise = new Promise<void>((resolve, reject) => {
-          claude.on("text", (text: string) => {
-            logger.info({ receivedTextLength: text.length }, "Adapter received text event");
-            // Yield new text incrementally
-            const newText = text.slice(currentText.length);
-            if (newText) {
-              currentText = text;
-              logger.info({ currentTextLength: currentText.length }, "Updated currentText");
-            }
-          });
-
-          claude.on("exit", () => {
-            resolve();
-          });
-
-          claude.on("error", (error: Error) => {
-            reject(error);
-          });
-        });
-
-        // Poll for new text and yield it
-        const pollInterval = 100; // ms
-        let lastYieldedLength = 0;
-
-        while (true) {
-          // Check if there's new text to yield
-          if (currentText.length > lastYieldedLength) {
-            yield currentText.slice(lastYieldedLength);
-            lastYieldedLength = currentText.length;
-          }
-
-          // Check if we're done
-          if (!claude.isRunning()) {
-            // Yield any remaining text
-            if (currentText.length > lastYieldedLength) {
-              yield currentText.slice(lastYieldedLength);
-            }
-            break;
-          }
-
-          // Wait a bit before checking again
-          await new Promise((resolve) => setTimeout(resolve, pollInterval));
-        }
-
-        // Wait for the process to fully complete
-        await textPromise;
-      } finally {
-        activeSessions.set(session.id, false);
+        yield response;
+      } catch (error) {
+        const err = error as Error;
+        logger.error({ error: err.message }, "tmux bridge error");
+        yield `Error: ${err.message}`;
       }
     },
 
-    isSessionActive(session: Session): boolean {
-      return activeSessions.get(session.id) ?? false;
+    isSessionActive(_session: Session): boolean {
+      return bridge.isAttached();
     },
+
+    // Expose the bridge for direct access if needed
+    bridge,
   };
 }
 
@@ -203,8 +176,8 @@ async function main(): Promise<void> {
     const sessionManagerAdapter = createSessionManagerAdapter(sessionManager);
     const claudeBridgeAdapter = createClaudeBridgeAdapter();
 
-    // Initialize and start bot
-    initializeBot(sessionManagerAdapter, claudeBridgeAdapter);
+    // Initialize and start bot (pass real sessionManager for command registration)
+    initializeBot(sessionManagerAdapter, claudeBridgeAdapter, sessionManager);
     await startBot();
 
     logger.info("Bot is running. Press Ctrl+C to stop.");
