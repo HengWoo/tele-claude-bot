@@ -1,16 +1,38 @@
-import { existsSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
+import { existsSync, writeFileSync, unlinkSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { sendKeys, capturePane, formatForTelegram, paneExists, getPaneInfo, stripAnsi } from "./index.js";
 import { createChildLogger } from "../utils/logger.js";
 
 const logger = createChildLogger("tmux-bridge");
 
 const CLAUDE_DIR = `${homedir()}/.claude`;
-const PENDING_FILE = `${CLAUDE_DIR}/tg-pending`;
-const DONE_FILE = `${CLAUDE_DIR}/tg-done`;
 const STATE_FILE = `${CLAUDE_DIR}/tg-state.json`;
 
+/**
+ * Sanitize tmux target for use in filenames
+ * Converts "session:window.pane" to "session-window-pane"
+ */
+export function sanitizeTarget(target: string): string {
+  return target.replace(/[:.]/g, "-");
+}
+
+/**
+ * Get the pending file path for a specific target
+ */
+export function getPendingFilePath(target: string): string {
+  return `${CLAUDE_DIR}/tg-pending-${sanitizeTarget(target)}`;
+}
+
+/**
+ * Get the done file path for a specific target
+ */
+export function getDoneFilePath(target: string): string {
+  return `${CLAUDE_DIR}/tg-done-${sanitizeTarget(target)}`;
+}
+
 export interface PendingRequest {
+  requestId: string;
   target: string;
   chatId: number;
   messageId: number;
@@ -98,7 +120,9 @@ export class TmuxBridge {
     this.state.attachedTarget = null;
     this.state.pendingRequest = null;
     this.saveState();
-    this.cleanupMarkerFiles();
+    if (previousTarget) {
+      this.cleanupMarkerFiles(previousTarget);
+    }
     logger.info({ previousTarget }, "Detached from tmux pane");
   }
 
@@ -147,14 +171,16 @@ export class TmuxBridge {
     const exists = await paneExists(target);
     if (!exists) {
       this.state.attachedTarget = null;
+      this.saveState();
       throw new Error(`Pane ${target} no longer exists. Please /attach to a valid pane.`);
     }
 
     // Clean up any stale marker files BEFORE starting
-    this.cleanupMarkerFiles();
+    this.cleanupMarkerFiles(target);
 
-    // Create pending marker
+    // Create pending marker with unique request ID
     const pending: PendingRequest = {
+      requestId: randomUUID(),
       target,
       chatId,
       messageId,
@@ -163,7 +189,7 @@ export class TmuxBridge {
     };
 
     this.state.pendingRequest = pending;
-    writeFileSync(PENDING_FILE, JSON.stringify(pending));
+    writeFileSync(getPendingFilePath(target), JSON.stringify(pending));
 
     logger.info({ target, chatId, messageId }, "Sending message to Claude via tmux");
 
@@ -175,14 +201,14 @@ export class TmuxBridge {
       // Send message to tmux
       await sendKeys(target, message);
 
-      // Wait for completion - pass original message for better parsing
-      const response = await this.waitForCompletion(target, beforeLineCount, timeout, message);
+      // Wait for completion - pass pending request for ID validation
+      const response = await this.waitForCompletion(target, beforeLineCount, timeout, pending, message);
 
       return response;
     } finally {
       // Clean up
       this.state.pendingRequest = null;
-      this.cleanupMarkerFiles();
+      this.cleanupMarkerFiles(target);
     }
   }
 
@@ -193,17 +219,52 @@ export class TmuxBridge {
     target: string,
     startLineCount: number,
     timeout: number,
+    pendingRequest: PendingRequest,
     userMessage?: string
   ): Promise<string> {
     const startTime = Date.now();
     let lastOutput = "";
+    const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
-    logger.debug({ target, timeout }, "Waiting for Claude completion");
+    const doneFile = getDoneFilePath(target);
+    logger.debug({ target, timeout, requestId: pendingRequest.requestId, doneFile }, "Waiting for Claude completion");
 
     while (Date.now() - startTime < timeout) {
-      // Check if done signal exists
-      if (existsSync(DONE_FILE)) {
-        logger.debug("Done signal detected");
+      // Check if done signal exists for this target
+      if (existsSync(doneFile)) {
+        logger.debug({ doneFile }, "Done signal detected");
+
+        // Validate the done signal matches our request
+        try {
+          const doneData = JSON.parse(readFileSync(doneFile, "utf-8"));
+
+          // Check if the requestId matches (if present in done file)
+          if (doneData.requestId && doneData.requestId !== pendingRequest.requestId) {
+            logger.warn(
+              { expected: pendingRequest.requestId, got: doneData.requestId },
+              "Done signal requestId mismatch - ignoring stale signal"
+            );
+            // Clean up the stale done file and continue waiting
+            try { unlinkSync(doneFile); } catch { /* ignore */ }
+            await this.sleep(500);
+            continue;
+          }
+
+          // Check if the done signal is stale (timestamp > 10 minutes old)
+          if (doneData.timestamp && Date.now() - doneData.timestamp > STALE_THRESHOLD_MS) {
+            logger.warn(
+              { timestamp: doneData.timestamp, age: Date.now() - doneData.timestamp },
+              "Done signal is stale (>10 minutes) - ignoring"
+            );
+            try { unlinkSync(doneFile); } catch { /* ignore */ }
+            await this.sleep(500);
+            continue;
+          }
+        } catch {
+          // If done file can't be parsed, check if it was created after our request started
+          // This handles legacy done files without requestId
+          logger.debug("Done file unparseable, accepting for backward compatibility");
+        }
 
         // Give Claude a moment to finish writing to terminal
         await this.sleep(500);
@@ -224,13 +285,27 @@ export class TmuxBridge {
       await this.sleep(500);
     }
 
-    // Timeout reached - return whatever we have
+    // Timeout reached - check if Claude is still actively producing output
     logger.warn({ target, timeout }, "Timeout waiting for Claude response");
-    const finalOutput = await capturePane(target);
+
+    // Capture output twice with a delay to detect ongoing activity
+    const outputBefore = await capturePane(target);
+    await this.sleep(2000);
+    const outputAfter = await capturePane(target);
+
+    const claudeStillActive = outputAfter !== outputBefore;
+    if (claudeStillActive) {
+      logger.info({ target }, "Claude still producing output after timeout");
+    }
+
+    const finalOutput = outputAfter;
     const response = this.parseClaudeResponse(finalOutput, startLineCount, userMessage);
 
     if (response.trim()) {
-      return response + "\n\n[Response may be incomplete - timeout reached]";
+      const suffix = claudeStillActive
+        ? "\n\n[Response incomplete - Claude still running. Wait for completion or send another message.]"
+        : "\n\n[Response may be incomplete - timeout reached]";
+      return response + suffix;
     }
 
     throw new Error(`Timeout waiting for Claude response after ${timeout / 1000}s`);
@@ -395,18 +470,41 @@ export class TmuxBridge {
   }
 
   /**
-   * Clean up marker files
+   * Clean up marker files for a specific target
    */
-  private cleanupMarkerFiles(): void {
+  private cleanupMarkerFiles(target: string): void {
+    const pendingFile = getPendingFilePath(target);
+    const doneFile = getDoneFilePath(target);
     try {
-      if (existsSync(PENDING_FILE)) {
-        unlinkSync(PENDING_FILE);
+      if (existsSync(pendingFile)) {
+        unlinkSync(pendingFile);
       }
-      if (existsSync(DONE_FILE)) {
-        unlinkSync(DONE_FILE);
+      if (existsSync(doneFile)) {
+        unlinkSync(doneFile);
       }
     } catch (error) {
-      logger.warn({ error: (error as Error).message }, "Failed to cleanup marker files");
+      logger.warn({ error: (error as Error).message, target }, "Failed to cleanup marker files");
+    }
+  }
+
+  /**
+   * Clean up ALL marker files (used on startup)
+   */
+  private cleanupAllMarkerFiles(): void {
+    try {
+      if (!existsSync(CLAUDE_DIR)) return;
+
+      const files = readdirSync(CLAUDE_DIR);
+      for (const file of files) {
+        if (file.startsWith("tg-pending-") || file.startsWith("tg-done-")) {
+          try {
+            unlinkSync(`${CLAUDE_DIR}/${file}`);
+            logger.debug({ file }, "Cleaned up stale marker file");
+          } catch { /* ignore individual file errors */ }
+        }
+      }
+    } catch (error) {
+      logger.warn({ error: (error as Error).message }, "Failed to cleanup all marker files");
     }
   }
 
@@ -440,7 +538,7 @@ export class TmuxBridge {
     }
 
     // Clear any stale pending requests on startup
-    this.cleanupMarkerFiles();
+    this.cleanupAllMarkerFiles();
   }
 }
 

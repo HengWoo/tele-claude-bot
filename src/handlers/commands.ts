@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { BotContext, NotificationLevel } from "../types.js";
 import { SessionManager } from "../sessions/manager.js";
 import { createChildLogger } from "../utils/logger.js";
@@ -17,13 +17,21 @@ import {
 const logger = createChildLogger("command-handler");
 
 /**
- * Expand ~ to home directory in paths
+ * Expand ~ to home directory in paths and validate against directory traversal
  */
 function expandPath(path: string): string {
+  let resolved = path;
   if (path.startsWith("~/")) {
-    return join(homedir(), path.slice(2));
+    resolved = join(homedir(), path.slice(2));
   }
-  return path;
+  resolved = resolve(resolved);
+
+  // Ensure no traversal outside home directory
+  const home = homedir();
+  if (!resolved.startsWith(home)) {
+    throw new Error("Path must be within home directory");
+  }
+  return resolved;
 }
 
 /**

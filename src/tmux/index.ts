@@ -1,8 +1,8 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createChildLogger } from "../utils/logger.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const logger = createChildLogger("tmux");
 
 export interface TmuxPane {
@@ -32,7 +32,7 @@ export function validateTarget(target: string): boolean {
  */
 export async function isTmuxAvailable(): Promise<boolean> {
   try {
-    await execAsync("tmux list-sessions");
+    await execFileAsync("tmux", ["list-sessions"]);
     return true;
   } catch {
     return false;
@@ -55,13 +55,13 @@ export async function sendKeys(target: string, text: string): Promise<void> {
 
   try {
     // Send text with -l (literal mode)
-    await execAsync(`tmux send-keys -t "${target}" -l "${escaped}"`);
+    await execFileAsync("tmux", ["send-keys", "-t", target, "-l", escaped]);
 
     // Small delay to ensure text is processed
     await new Promise(resolve => setTimeout(resolve, 50));
 
     // Send Enter to execute
-    await execAsync(`tmux send-keys -t "${target}" Enter`);
+    await execFileAsync("tmux", ["send-keys", "-t", target, "Enter"]);
 
     logger.debug({ target }, "Keys sent successfully");
   } catch (error) {
@@ -89,8 +89,8 @@ export async function capturePane(
   logger.debug({ target, lines, startLine }, "Capturing tmux pane");
 
   try {
-    const startArg = startLine !== undefined ? `-S ${startLine}` : `-S -${lines}`;
-    const { stdout } = await execAsync(`tmux capture-pane -t "${target}" -p ${startArg}`);
+    const startLineValue = startLine !== undefined ? String(startLine) : String(-lines);
+    const { stdout } = await execFileAsync("tmux", ["capture-pane", "-t", target, "-p", "-S", startLineValue]);
     return stdout;
   } catch (error) {
     const err = error as Error;
@@ -104,9 +104,12 @@ export async function capturePane(
  */
 export async function listPanes(): Promise<TmuxPane[]> {
   try {
-    const { stdout } = await execAsync(
-      `tmux list-panes -a -F "#{session_name}|#{window_index}|#{pane_index}|#{pane_current_command}|#{pane_active}|#{pane_title}"`
-    );
+    const { stdout } = await execFileAsync("tmux", [
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_name}|#{window_index}|#{pane_index}|#{pane_current_command}|#{pane_active}|#{pane_title}",
+    ]);
 
     if (!stdout.trim()) {
       return [];
@@ -145,7 +148,7 @@ export async function listPanes(): Promise<TmuxPane[]> {
  */
 export async function listSessions(): Promise<string[]> {
   try {
-    const { stdout } = await execAsync(`tmux list-sessions -F "#{session_name}"`);
+    const { stdout } = await execFileAsync("tmux", ["list-sessions", "-F", "#{session_name}"]);
     return stdout.trim().split("\n").filter(Boolean);
   } catch (error) {
     const err = error as Error;
