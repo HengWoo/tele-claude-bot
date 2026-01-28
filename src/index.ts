@@ -1,16 +1,24 @@
 import "dotenv/config";
-import { initializeBot, startBot, stopBot } from "./bot.js";
+import { initializeBot, startBot, stopBot, bot } from "./bot.js";
 import { getConfig } from "./config.js";
 import { createSessionManager } from "./sessions/manager.js";
 import { approvalQueue } from "./claude/bridge.js";
 import { createChildLogger } from "./utils/logger.js";
 import type { Session } from "./types.js";
 import { getTmuxBridge } from "./tmux/bridge.js";
+import { ApprovalService } from "./approval/index.js";
+import { Scheduler } from "./scheduler/index.js";
+import { registerScheduleCommands } from "./handlers/schedule.js";
+import { setApprovalHandler, registerCallbackHandlers } from "./handlers/callbacks.js";
 
 const logger = createChildLogger("main");
 
 // Graceful shutdown handling
 let isShuttingDown = false;
+
+// Service references for shutdown
+let approvalService: ApprovalService | null = null;
+let scheduler: Scheduler | null = null;
 
 async function shutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
@@ -19,6 +27,18 @@ async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, "Received shutdown signal");
 
   try {
+    // Stop the scheduler
+    if (scheduler) {
+      scheduler.stop();
+      logger.info("Scheduler stopped");
+    }
+
+    // Stop the approval service
+    if (approvalService) {
+      await approvalService.stop();
+      logger.info("Approval service stopped");
+    }
+
     // Stop the bot
     await stopBot();
 
@@ -176,9 +196,34 @@ async function main(): Promise<void> {
     const sessionManagerAdapter = createSessionManagerAdapter(sessionManager);
     const claudeBridgeAdapter = createClaudeBridgeAdapter();
 
+    // Initialize the scheduler service
+    scheduler = new Scheduler();
+    scheduler.start();
+    logger.info("Scheduler service started");
+
+    // Register schedule commands before initializing the bot
+    registerScheduleCommands(bot, scheduler);
+
+    // Register callback handlers (including hook approval callbacks)
+    registerCallbackHandlers(bot);
+
     // Initialize and start bot (pass real sessionManager for command registration)
     initializeBot(sessionManagerAdapter, claudeBridgeAdapter, sessionManager);
     await startBot();
+
+    // Initialize approval service after bot is started (needs chatId from first allowed user)
+    const primaryUserId = config.telegram.allowedUsers[0];
+    if (primaryUserId) {
+      approvalService = new ApprovalService(bot, primaryUserId);
+      await approvalService.start();
+
+      // Set the approval handler reference for callback handling
+      setApprovalHandler(approvalService.getHandler());
+
+      logger.info({ chatId: primaryUserId }, "Approval service started");
+    } else {
+      logger.warn("No allowed users configured, approval service not started");
+    }
 
     logger.info("Bot is running. Press Ctrl+C to stop.");
   } catch (error) {

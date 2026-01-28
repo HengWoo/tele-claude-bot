@@ -3,11 +3,22 @@ import type { Bot } from "grammy";
 import { approvalQueue } from "../claude/approval.js";
 import { createChildLogger } from "../utils/logger.js";
 import type { BotContext, Session } from "../types.js";
+import type { ApprovalHandler } from "../approval/handler.js";
 
 const logger = createChildLogger("callbacks");
 
 // Reference to session manager (set during initialization)
 let sessionManagerRef: SessionManagerInterface | null = null;
+
+// Reference to approval handler for hook-based approvals
+let approvalHandlerRef: ApprovalHandler | null = null;
+
+/**
+ * Set the approval handler reference for hook-based approvals
+ */
+export function setApprovalHandler(handler: ApprovalHandler): void {
+  approvalHandlerRef = handler;
+}
 
 export interface SessionManagerInterface {
   get(name: string): Session | undefined;
@@ -122,6 +133,57 @@ export async function handleApprovalCallback(ctx: Context): Promise<void> {
 }
 
 /**
+ * Handle hook-based approval callback queries (from PreToolUse hook system)
+ */
+export async function handleHookApprovalCallback(ctx: Context): Promise<void> {
+  const callbackData = ctx.callbackQuery?.data;
+
+  if (!callbackData) {
+    logger.warn("Received hook approval callback without data");
+    await ctx.answerCallbackQuery({ text: "Invalid callback" });
+    return;
+  }
+
+  // Parse callback data (format: hook_approve:id or hook_deny:id)
+  const colonIndex = callbackData.indexOf(":");
+  if (colonIndex === -1) {
+    logger.warn({ callbackData }, "Invalid hook approval callback format");
+    await ctx.answerCallbackQuery({ text: "Invalid callback format" });
+    return;
+  }
+
+  const action = callbackData.substring(0, colonIndex);
+  const requestId = callbackData.substring(colonIndex + 1);
+
+  logger.debug({ action, requestId }, "Processing hook approval callback");
+
+  if (!approvalHandlerRef) {
+    logger.error("Approval handler not initialized");
+    await ctx.answerCallbackQuery({ text: "Approval service not available" });
+    return;
+  }
+
+  try {
+    const approved = action === "hook_approve";
+    const resolved = await approvalHandlerRef.resolveRequest(requestId, approved);
+
+    if (resolved) {
+      await ctx.answerCallbackQuery({ text: approved ? "Approved" : "Denied" });
+      await ctx.editMessageText(
+        approved ? "<b>✅ Approved</b>" : "<b>❌ Denied</b>",
+        { parse_mode: "HTML" }
+      );
+    } else {
+      await ctx.answerCallbackQuery({ text: "Request already processed or expired" });
+    }
+  } catch (error) {
+    const err = error as Error;
+    logger.error({ error: err.message, action, requestId }, "Failed to process hook approval callback");
+    await ctx.answerCallbackQuery({ text: "Error processing approval" });
+  }
+}
+
+/**
  * Handle session switching callback queries
  */
 export async function handleSessionCallback(ctx: Context): Promise<void> {
@@ -172,10 +234,14 @@ export async function handleSessionCallback(ctx: Context): Promise<void> {
  * Register callback query handlers on the bot
  */
 export function registerCallbackHandlers(bot: Bot<BotContext>): void {
-  // Approval callbacks
+  // Approval callbacks (existing in-session approvals)
   bot.callbackQuery(/^approve:/, handleApprovalCallback);
   bot.callbackQuery(/^deny:/, handleApprovalCallback);
   bot.callbackQuery(/^approve_all:/, handleApprovalCallback);
+
+  // Hook-based approval callbacks (from PreToolUse hook system)
+  bot.callbackQuery(/^hook_approve:/, handleHookApprovalCallback);
+  bot.callbackQuery(/^hook_deny:/, handleHookApprovalCallback);
 
   // Session switching callbacks
   bot.callbackQuery(/^session:/, handleSessionCallback);
