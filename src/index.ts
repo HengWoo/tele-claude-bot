@@ -6,7 +6,7 @@ import { approvalQueue } from "./claude/bridge.js";
 import { createChildLogger } from "./utils/logger.js";
 import type { Session } from "./types.js";
 import { getTmuxBridge } from "./tmux/bridge.js";
-import { ApprovalService } from "./approval/index.js";
+import { ApprovalService, cleanupStalePendingFiles, VetoWatcher } from "./approval/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { registerScheduleCommands } from "./handlers/schedule.js";
 import { setApprovalHandler, registerCallbackHandlers } from "./handlers/callbacks.js";
@@ -18,6 +18,7 @@ let isShuttingDown = false;
 
 // Service references for shutdown
 let approvalService: ApprovalService | null = null;
+let vetoWatcher: VetoWatcher | null = null;
 let scheduler: Scheduler | null = null;
 
 async function shutdown(signal: string): Promise<void> {
@@ -37,6 +38,12 @@ async function shutdown(signal: string): Promise<void> {
     if (approvalService) {
       await approvalService.stop();
       logger.info("Approval service stopped");
+    }
+
+    // Stop the veto watcher
+    if (vetoWatcher) {
+      await vetoWatcher.stop();
+      logger.info("Veto watcher stopped");
     }
 
     // Stop the bot
@@ -176,6 +183,12 @@ async function main(): Promise<void> {
   logger.info("Starting Telegram Claude Bot...");
 
   try {
+    // Clean up stale pending files from crashed sessions (older than 10 minutes)
+    const stalePendingRemoved = cleanupStalePendingFiles(10 * 60 * 1000);
+    if (stalePendingRemoved > 0) {
+      logger.info({ count: stalePendingRemoved }, "Cleaned up stale pending files on startup");
+    }
+
     // Load and validate config
     const config = getConfig();
     logger.info(
@@ -221,6 +234,11 @@ async function main(): Promise<void> {
       setApprovalHandler(approvalService.getHandler());
 
       logger.info({ chatId: primaryUserId }, "Approval service started");
+
+      // Initialize veto watcher for blocked operation notifications
+      vetoWatcher = new VetoWatcher(bot, primaryUserId);
+      await vetoWatcher.start();
+      logger.info({ chatId: primaryUserId }, "Veto watcher started");
     } else {
       logger.warn("No allowed users configured, approval service not started");
     }

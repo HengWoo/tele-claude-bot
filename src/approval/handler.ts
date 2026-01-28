@@ -104,8 +104,8 @@ export class ApprovalHandler {
 
     lines.push(`\n<b>Input:</b>\n<pre>${this.escapeHtml(inputDisplay)}</pre>`);
 
-    // Timestamp
-    const timestamp = new Date(request.timestamp).toLocaleString();
+    // Timestamp (request.timestamp is in seconds, Date() expects milliseconds)
+    const timestamp = new Date(request.timestamp * 1000).toLocaleString();
     lines.push(`\n<i>Requested at: ${timestamp}</i>`);
 
     return lines.join("\n");
@@ -116,13 +116,22 @@ export class ApprovalHandler {
    * Called by callback handlers when user clicks approve/deny
    */
   async resolveRequest(requestId: string, approved: boolean): Promise<boolean> {
+    logger.debug(
+      { requestId, approved, pendingCount: this.pendingRequests.size, pendingIds: Array.from(this.pendingRequests.keys()) },
+      "Attempting to resolve request"
+    );
+
     const pending = this.pendingRequests.get(requestId);
     if (!pending) {
-      logger.warn({ requestId }, "Attempted to resolve unknown or expired request");
+      logger.warn(
+        { requestId, pendingIds: Array.from(this.pendingRequests.keys()) },
+        "Attempted to resolve unknown or expired request"
+      );
       return false;
     }
 
     await this.writeResponse(requestId, approved);
+    logger.info({ requestId, approved }, "Successfully resolved request");
     return true;
   }
 

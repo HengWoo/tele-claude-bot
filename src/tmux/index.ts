@@ -202,6 +202,110 @@ export function stripAnsi(text: string): string {
 }
 
 /**
+ * Check if Claude Code is idle (at the prompt, ready for input)
+ * Looks for the ❯ prompt without busy indicators AFTER the prompt
+ */
+export async function isClaudeIdle(target: string): Promise<boolean> {
+  try {
+    const content = await capturePane(target, 20); // Last 20 lines
+    const cleaned = stripAnsi(content);
+
+    // Filter out:
+    // - Empty lines
+    // - Status bar lines (⏵⏵ bypass permissions...)
+    // - Horizontal rule lines (───────)
+    const lines = cleaned
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => {
+        if (!l) return false;
+        if (l.startsWith("⏵")) return false;
+        // Filter horizontal rules (lines of repeated ─, -, =, etc.)
+        if (/^[─━═┄┅┈┉\-_=]+$/.test(l)) return false;
+        return true;
+      });
+
+    if (lines.length === 0) return false;
+
+    // Find the LAST prompt line (❯ or >)
+    let promptIndex = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (/^[❯>]\s*$/.test(lines[i]) || lines[i] === "❯") {
+        promptIndex = i;
+        break;
+      }
+    }
+
+    // No prompt found = not idle
+    if (promptIndex === -1) {
+      logger.debug({ target, lastLines: lines.slice(-3).map(l => l.slice(0, 40)) }, "No prompt found");
+      return false;
+    }
+
+    // Check if there are busy indicators AFTER the prompt
+    // (Lines after the prompt that indicate Claude started working again)
+    const linesAfterPrompt = lines.slice(promptIndex + 1);
+
+    // Busy indicators - Claude is processing
+    const busyPatterns = [
+      /Running.*hooks/i,
+      /Hatching/i,
+      /Metamorphosing/i,
+      /Transfiguring/i,
+      /Thinking/i,
+      /✻/,  // Spinner
+      /◐|◑|◒|◓/,  // Rotating spinner
+      /Esc to interrupt/i,
+      // Tool execution indicators - match any tool-like pattern after prompt
+      /^⏺\s*\w+\s*\(/,  // ⏺ Word( - e.g., "⏺ Bash(", "⏺ Update("
+      /^⏺\s*\w+\b/,     // ⏺ Word - e.g., "⏺ Read file", "⏺ Task agent"
+      /^·\s*\w+/i,       // · Word - alternative bullet style
+    ];
+
+    for (const line of linesAfterPrompt) {
+      for (const pattern of busyPatterns) {
+        if (pattern.test(line)) {
+          logger.debug({ target, pattern: pattern.source, line: line.slice(0, 40) }, "Claude is busy (activity after prompt)");
+          return false;
+        }
+      }
+    }
+
+    // Prompt found and no busy activity after it = idle
+    logger.debug({ target, promptIndex, linesAfterPrompt: linesAfterPrompt.length }, "Claude is idle");
+    return true;
+  } catch (error) {
+    logger.warn({ target, error: (error as Error).message }, "Failed to check idle state");
+    return false;
+  }
+}
+
+/**
+ * Wait for Claude to become idle (with timeout)
+ * @param target - tmux target
+ * @param timeoutMs - maximum time to wait (default: 30 seconds)
+ * @param pollIntervalMs - how often to check (default: 500ms)
+ * @returns true if Claude became idle, false if timeout
+ */
+export async function waitForIdle(
+  target: string,
+  timeoutMs = 30000,
+  pollIntervalMs = 500
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    if (await isClaudeIdle(target)) {
+      return true;
+    }
+    await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+  }
+
+  logger.warn({ target, timeoutMs }, "Timeout waiting for Claude to become idle");
+  return false;
+}
+
+/**
  * Format pane output for Telegram
  * - Strips ANSI codes
  * - Converts to HTML formatting

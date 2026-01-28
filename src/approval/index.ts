@@ -96,3 +96,13 @@ export {
 
 // Re-export policy namespace for advanced usage
 export { policy };
+
+// Re-export context detection utilities
+export {
+  hasPendingTelegramRequest,
+  getPendingTelegramFiles,
+  cleanupStalePendingFiles,
+} from "./context.js";
+
+// Re-export veto watcher for blocked operation notifications
+export { VetoWatcher } from "./veto-watcher.js";

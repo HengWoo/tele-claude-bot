@@ -56,6 +56,10 @@ export interface TmuxBridgeState {
 
 /**
  * TmuxBridge manages the connection between Telegram bot and tmux panes running Claude
+ *
+ * Note: Claude Code has internal input buffering - messages sent via tmux send-keys
+ * while Claude is busy will be queued in the prompt and processed when ready.
+ * This means we don't need our own message queue system.
  */
 export class TmuxBridge {
   private state: TmuxBridgeState = {
@@ -158,6 +162,9 @@ export class TmuxBridge {
 
   /**
    * Send a message to Claude via tmux and wait for response
+   *
+   * Claude Code handles input buffering internally - if Claude is busy,
+   * the message will wait in the prompt and be processed when ready.
    */
   async sendMessage(
     message: string,
@@ -169,11 +176,6 @@ export class TmuxBridge {
 
     if (!target) {
       throw new Error("Not attached to any tmux pane. Use /attach <target> first.");
-    }
-
-    // Check if there's already a pending request
-    if (this.state.pendingRequest) {
-      throw new Error("Another request is already pending. Please wait for it to complete.");
     }
 
     // Verify pane still exists
