@@ -5,6 +5,7 @@ import {
   formatInlineCode,
   formatToolHeader,
   formatToHtml,
+  formatMarkdownTable,
   truncateHtml,
 } from "./telegram-formatter.js";
 
@@ -79,6 +80,86 @@ describe("telegram-formatter", () => {
       expect(formatToolHeader("<script>")).toBe(
         "\u{1F527} <b>&lt;script&gt;</b>"
       );
+    });
+  });
+
+  describe("formatMarkdownTable", () => {
+    it("should format a simple table with box-drawing style", () => {
+      const lines = ["| A | B |", "|---|---|", "| 1 | 2 |"];
+      const result = formatMarkdownTable(lines);
+      expect(result).toContain("<pre>");
+      expect(result).toContain("A");
+      expect(result).toContain("B");
+      expect(result).toContain("│"); // Box-drawing separator
+      expect(result).toContain("─"); // Box-drawing horizontal
+    });
+
+    it("should use vertical card format for wide tables", () => {
+      const lines = [
+        "| Column One | Column Two | Column Three | Column Four | Column Five |",
+        "|------------|------------|--------------|-------------|-------------|",
+        "| Value 1    | Value 2    | Value 3      | Value 4     | Value 5     |",
+      ];
+      const result = formatMarkdownTable(lines);
+      expect(result).toContain("<pre>");
+      // Card format shows header: value pairs
+      expect(result).toContain("Column One");
+      expect(result).toContain("│");
+      expect(result).toContain("Value 1");
+    });
+
+    it("should return empty string for empty input", () => {
+      const result = formatMarkdownTable([]);
+      expect(result).toBe("");
+    });
+
+    it("should handle table without separator row", () => {
+      const lines = ["| X | Y |", "| 3 | 4 |"];
+      const result = formatMarkdownTable(lines);
+      expect(result).toContain("X");
+      expect(result).toContain("Y");
+      expect(result).not.toContain("─┼─"); // No separator line
+    });
+
+    it("should pad columns to equal width", () => {
+      const lines = ["| Short | LongerColumn |", "|-------|--------------|", "| A | B |"];
+      const result = formatMarkdownTable(lines);
+      // The output should have padded cells
+      expect(result).toContain("Short");
+      expect(result).toContain("LongerColumn");
+    });
+
+    it("should recognize separator rows with alignment colons", () => {
+      const lines = ["| Left | Center | Right |", "|:-----|:------:|------:|", "| A | B | C |"];
+      const result = formatMarkdownTable(lines);
+      expect(result).toContain("─"); // Should have separator line after header
+      expect(result).not.toContain(":"); // Colons should not appear in output
+    });
+
+    it("should handle wide table with only header row", () => {
+      const lines = [
+        "| Very Long Column Name One | Very Long Column Name Two | Very Long Column Name Three |",
+        "|---------------------------|---------------------------|------------------------------|",
+      ];
+      const result = formatMarkdownTable(lines);
+      expect(result).toContain("<pre>");
+      expect(result).toContain("Very Long Column Name One");
+      expect(result).not.toContain("undefined");
+    });
+
+    it("should handle rows with uneven column counts", () => {
+      const lines = [
+        "| A | B | C |",
+        "|---|---|---|",
+        "| 1 | 2 |",      // Missing third column
+        "| X | Y | Z |",
+      ];
+      const result = formatMarkdownTable(lines);
+      expect(result).toContain("A");
+      expect(result).toContain("B");
+      expect(result).toContain("C");
+      expect(result).toContain("1");
+      expect(result).not.toContain("undefined");
     });
   });
 
@@ -229,7 +310,86 @@ describe("telegram-formatter", () => {
       });
     });
 
-    describe("tables", () => {
+    describe("pipe tables", () => {
+      it("should convert narrow pipe table to box-drawing style", () => {
+        const input = "| Name | Age |\n|------|-----|\n| Bob  | 30  |";
+        const result = formatToHtml(input);
+        expect(result).toContain("<pre>");
+        expect(result).toContain("</pre>");
+        expect(result).toContain("Name");
+        expect(result).toContain("Age");
+        expect(result).toContain("Bob");
+        expect(result).toContain("30");
+        // Should use box-drawing characters for narrow tables
+        expect(result).toContain("│");
+        expect(result).toContain("─");
+      });
+
+      it("should convert wide pipe table to vertical card format", () => {
+        const input = "| Column One | Column Two | Column Three | Column Four | Column Five |\n|------------|------------|--------------|-------------|-------------|\n| Value 1    | Value 2    | Value 3      | Value 4     | Value 5     |";
+        const result = formatToHtml(input);
+        expect(result).toContain("<pre>");
+        // Card format shows header: value pairs vertically
+        expect(result).toContain("Column One");
+        expect(result).toContain("Value 1");
+        expect(result).toContain("│"); // Separator between header and value
+      });
+
+      it("should handle pipe table without separator row", () => {
+        const input = "| A | B |\n| 1 | 2 |";
+        const result = formatToHtml(input);
+        expect(result).toContain("<pre>");
+        expect(result).toContain("A");
+        expect(result).toContain("B");
+        // No separator line should be added
+        expect(result).not.toContain("─┼─");
+      });
+
+      it("should escape HTML in table cells", () => {
+        const input = "| Tag | Example |\n|-----|----------|\n| div | <div>    |";
+        const result = formatToHtml(input);
+        expect(result).toContain("&lt;div&gt;");
+        expect(result).not.toContain("<div>");
+      });
+
+      it("should handle mixed content with pipe table", () => {
+        const input = `Some text here
+
+| Col1 | Col2 |
+|------|------|
+| A    | B    |
+
+And more text after`;
+        const result = formatToHtml(input);
+        expect(result).toContain("Some text here");
+        expect(result).toContain("<pre>");
+        expect(result).toContain("And more text after");
+      });
+
+      it("should not treat single pipe line as table", () => {
+        const input = "This is a | pipe in text";
+        const result = formatToHtml(input);
+        expect(result).not.toContain("<pre>");
+        expect(result).toContain("This is a | pipe in text");
+      });
+
+      it("should not treat single pipe table row as table", () => {
+        const input = "| Header1 | Header2 |";
+        const result = formatToHtml(input);
+        expect(result).not.toContain("<pre>");
+        expect(result).toContain("| Header1 | Header2 |");
+      });
+
+      it("should handle table at end of content", () => {
+        const input = "Text before\n| A | B |\n|---|---|\n| 1 | 2 |";
+        const result = formatToHtml(input);
+        expect(result).toContain("Text before");
+        expect(result).toContain("<pre>");
+        expect(result).toContain("A");
+      });
+    });
+
+    describe("box-drawing tables", () => {
       it("should format tables in pre blocks", () => {
         const input = "┌───┬───┐\n│ A │ B │\n└───┴───┘";
         const result = formatToHtml(input);
