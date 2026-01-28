@@ -12,10 +12,15 @@ const DEFAULT_TMUX_SESSION = process.env.CLAUDE_TMUX_SESSION ?? "claude";
 /**
  * Default morning briefing prompt
  */
-export const DEFAULT_MORNING_BRIEFING = `Provide a morning briefing:
-1. Summarize unread emails (top 5 most important)
-2. List today's calendar events
-3. Flag any urgent items that need attention`;
+export const DEFAULT_MORNING_BRIEFING = `First, read ~/.claude/soul.md for your personality and ~/.claude/memories/ for context about me.
+
+Then provide a morning briefing:
+1. Summarize unread emails (top 5 most important, use urgency indicators from soul.md)
+2. List today's calendar events with any relevant context from my memories
+3. Flag any urgent items that need attention
+4. Remind me of any important dates coming up (from memories/facts.md)
+
+Keep it concise and actionable.`;
 
 /**
  * Result of a job execution

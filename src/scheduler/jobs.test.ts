@@ -64,6 +64,14 @@ describe("scheduler jobs", () => {
       expect(DEFAULT_MORNING_BRIEFING.length).toBeGreaterThan(0);
     });
 
+    it("should reference soul.md for personality", () => {
+      expect(DEFAULT_MORNING_BRIEFING).toContain("soul.md");
+    });
+
+    it("should reference memories directory", () => {
+      expect(DEFAULT_MORNING_BRIEFING).toContain("memories");
+    });
+
     it("should contain expected content about emails", () => {
       expect(DEFAULT_MORNING_BRIEFING.toLowerCase()).toContain("email");
     });
