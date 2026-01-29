@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { Config, TelegramConfig, ClaudeConfig, SessionsConfig, NotificationsConfig } from "./types.js";
+import type { Config, TelegramConfig, ClaudeConfig, SessionsConfig, NotificationsConfig, FeishuConfig, FeishuDomain } from "./types.js";
 
 // Load environment variables
 import "dotenv/config";
@@ -34,6 +34,18 @@ function getEnvArray(key: string, fallback: number[]): number[] {
   const value = process.env[key];
   if (!value) return fallback;
   return value.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+}
+
+function getEnvStringArray(key: string, fallback: string[]): string[] {
+  const value = process.env[key];
+  if (!value) return fallback;
+  return value.split(",").map(s => s.trim()).filter(s => s.length > 0);
+}
+
+function getEnvBoolean(key: string, fallback: boolean): boolean {
+  const value = process.env[key];
+  if (value === undefined) return fallback;
+  return value.toLowerCase() === "true" || value === "1";
 }
 
 export function loadConfig(): Config {
@@ -84,11 +96,41 @@ export function loadConfig(): Config {
     onComplete: (defaults.notifications as NotificationsConfig | undefined)?.onComplete ?? true,
   };
 
+  // Feishu config (optional)
+  let feishu: FeishuConfig | undefined;
+  const feishuEnabled = getEnvBoolean("FEISHU_ENABLED", false);
+
+  if (feishuEnabled) {
+    const appId = process.env.FEISHU_APP_ID;
+    const appSecret = process.env.FEISHU_APP_SECRET;
+
+    if (!appId || !appSecret) {
+      throw new Error("FEISHU_APP_ID and FEISHU_APP_SECRET are required when FEISHU_ENABLED=true");
+    }
+
+    const domain = (process.env.FEISHU_DOMAIN || "feishu") as FeishuDomain;
+    if (domain !== "feishu" && domain !== "lark") {
+      throw new Error("FEISHU_DOMAIN must be either 'feishu' or 'lark'");
+    }
+
+    feishu = {
+      enabled: true,
+      appId,
+      appSecret,
+      webhookPort: getEnvNumber("FEISHU_WEBHOOK_PORT", 3000),
+      allowedUsers: getEnvStringArray("FEISHU_ALLOWED_USERS", []),
+      domain,
+      verificationToken: process.env.FEISHU_VERIFICATION_TOKEN,
+      encryptKey: process.env.FEISHU_ENCRYPT_KEY,
+    };
+  }
+
   return {
     telegram,
     claude,
     sessions,
     notifications,
+    feishu,
   };
 }
 

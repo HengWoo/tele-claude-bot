@@ -6,16 +6,22 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:telegram": "tsx watch src/telegram-main.ts",
+    "dev:feishu": "tsx watch src/feishu-main.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:telegram": "node dist/telegram-main.js",
+    "start:feishu": "node dist/feishu-main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.56.1",
     "chokidar": "^5.0.0",
     "dotenv": "^16.4.5",
+    "express": "^5.2.1",
     "grammy": "^1.39.3",
     "node-cron": "^4.2.1",
     "pino": "^8.19.0",
@@ -24,6 +30,7 @@
     "uuid": "^9.0.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^20.11.0",
     "@types/uuid": "^9.0.8",
     "@vitest/coverage-v8": "^4.0.18",

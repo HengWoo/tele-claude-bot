@@ -2,65 +2,76 @@ import { readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createChildLogger } from "../utils/logger.js";
+import type { Platform } from "../tmux/bridge.js";
 
 const logger = createChildLogger("approval-context");
 
 const CLAUDE_DIR = join(homedir(), ".claude");
-const PENDING_FILE_PREFIX = "tg-pending-";
 
 /**
- * Check if any tg-pending-* file exists in ~/.claude/
+ * Get the pending file prefix for a platform
+ */
+function getPendingPrefix(platform: Platform): string {
+  return `${platform}-pending-`;
+}
+
+/**
+ * Check if any pending file exists for the given platform in ~/.claude/
  * Indicates a bot-initiated request is in progress
  */
-export function hasPendingTelegramRequest(): boolean {
+export function hasPendingRequest(platform: Platform): boolean {
   try {
     if (!existsSync(CLAUDE_DIR)) {
       return false;
     }
 
+    const prefix = getPendingPrefix(platform);
     const files = readdirSync(CLAUDE_DIR);
-    return files.some((file) => file.startsWith(PENDING_FILE_PREFIX));
+    return files.some((file) => file.startsWith(prefix));
   } catch (error) {
     logger.warn(
-      { error: (error as Error).message },
-      "Failed to check for pending telegram requests"
+      { error: (error as Error).message, platform },
+      "Failed to check for pending requests"
     );
     return false;
   }
 }
 
 /**
- * Get list of pending telegram request files
+ * Get list of pending request files for the given platform
  */
-export function getPendingTelegramFiles(): string[] {
+export function getPendingFiles(platform: Platform): string[] {
   try {
     if (!existsSync(CLAUDE_DIR)) {
       return [];
     }
 
+    const prefix = getPendingPrefix(platform);
     const files = readdirSync(CLAUDE_DIR);
     return files
-      .filter((file) => file.startsWith(PENDING_FILE_PREFIX))
+      .filter((file) => file.startsWith(prefix))
       .map((file) => join(CLAUDE_DIR, file));
   } catch (error) {
     logger.warn(
-      { error: (error as Error).message },
-      "Failed to get pending telegram files"
+      { error: (error as Error).message, platform },
+      "Failed to get pending files"
     );
     return [];
   }
 }
 
 /**
- * Clean up stale tg-pending-* files older than maxAgeMs
+ * Clean up stale pending files for the given platform older than maxAgeMs
  * Used on bot startup to remove orphaned files from crashed sessions
  *
+ * @param platform The platform to clean up files for
  * @param maxAgeMs Maximum age in milliseconds before a file is considered stale (default: 10 minutes)
  * @returns Number of files removed
  */
-export function cleanupStalePendingFiles(maxAgeMs = 10 * 60 * 1000): number {
+export function cleanupStalePendingFiles(platform: Platform, maxAgeMs = 10 * 60 * 1000): number {
   const now = Date.now();
   let removedCount = 0;
+  const prefix = getPendingPrefix(platform);
 
   try {
     if (!existsSync(CLAUDE_DIR)) {
@@ -69,7 +80,7 @@ export function cleanupStalePendingFiles(maxAgeMs = 10 * 60 * 1000): number {
 
     const files = readdirSync(CLAUDE_DIR);
     const pendingFiles = files.filter((file) =>
-      file.startsWith(PENDING_FILE_PREFIX)
+      file.startsWith(prefix)
     );
 
     for (const file of pendingFiles) {
@@ -82,13 +93,13 @@ export function cleanupStalePendingFiles(maxAgeMs = 10 * 60 * 1000): number {
           unlinkSync(filePath);
           removedCount++;
           logger.info(
-            { file, ageMs: fileAge },
+            { platform, file, ageMs: fileAge },
             "Removed stale pending file"
           );
         }
       } catch (fileError) {
         logger.warn(
-          { error: (fileError as Error).message, file },
+          { platform, error: (fileError as Error).message, file },
           "Failed to process pending file during cleanup"
         );
       }
@@ -96,7 +107,7 @@ export function cleanupStalePendingFiles(maxAgeMs = 10 * 60 * 1000): number {
 
     if (removedCount > 0) {
       logger.info(
-        { removedCount },
+        { platform, removedCount },
         "Stale pending file cleanup completed"
       );
     }
@@ -104,7 +115,7 @@ export function cleanupStalePendingFiles(maxAgeMs = 10 * 60 * 1000): number {
     return removedCount;
   } catch (error) {
     logger.error(
-      { error: (error as Error).message },
+      { platform, error: (error as Error).message },
       "Failed to cleanup stale pending files"
     );
     return removedCount;

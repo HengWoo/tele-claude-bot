@@ -126,7 +126,7 @@ bot.command("status", async (ctx) => {
     return;
   }
 
-  const session = sessionManager.getActiveSession(userId!);
+  const session = sessionManager.getActiveSession(String(userId!));
 
   if (!session) {
     await ctx.reply(
