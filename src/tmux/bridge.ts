@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { sendKeys, capturePane, formatForTelegram, paneExists, getPaneInfo, stripAnsi } from "./index.js";
 import { formatToHtml, truncateHtml } from "../utils/telegram-formatter.js";
 import { createChildLogger } from "../utils/logger.js";
+import type { PlatformType } from "../platforms/types.js";
 
 const logger = createChildLogger("tmux-bridge");
 
@@ -11,8 +12,9 @@ const CLAUDE_DIR = `${homedir()}/.claude`;
 
 /**
  * Platform type for tmux bridge isolation
+ * Re-exported from platforms/types.ts for backwards compatibility
  */
-export type Platform = "telegram" | "feishu";
+export type Platform = PlatformType;
 
 /**
  * Get the state file path for a specific platform
