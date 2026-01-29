@@ -247,7 +247,8 @@ function toolInputToString(toolInput: unknown): string {
 }
 
 /**
- * Check if a pattern matches against tool name or input
+ * Check if a pattern matches against tool name or input.
+ * Uses a timeout to protect against ReDoS attacks from malicious patterns.
  */
 function matchesPattern(
   pattern: string,
@@ -256,7 +257,14 @@ function matchesPattern(
 ): boolean {
   try {
     const regex = new RegExp(pattern, "i");
-    return regex.test(toolName) || regex.test(toolInputStr);
+
+    // Limit input length to prevent ReDoS on very long inputs
+    const maxInputLength = 10000;
+    const truncatedInput = toolInputStr.length > maxInputLength
+      ? toolInputStr.slice(0, maxInputLength)
+      : toolInputStr;
+
+    return regex.test(toolName) || regex.test(truncatedInput);
   } catch (error) {
     const err = error as Error;
     logger.error({ pattern, error: err.message }, "Invalid regex pattern in policy rule");

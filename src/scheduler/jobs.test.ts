@@ -288,6 +288,61 @@ describe("scheduler jobs", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("tmux send-keys failed");
     });
+
+    it("should escape shell metacharacters in prompt", async () => {
+      // Mock has-session check (success)
+      const hasSessionProcess = createMockProcess();
+      (hasSessionProcess.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, callback: (code: number) => void) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 0);
+          }
+          return hasSessionProcess;
+        }
+      );
+
+      // Mock send-keys
+      const sendKeysProcess = createMockProcess();
+      (sendKeysProcess.stderr!.on as ReturnType<typeof vi.fn>).mockImplementation(() => sendKeysProcess);
+      (sendKeysProcess.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, callback: (code: number) => void) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 0);
+          }
+          return sendKeysProcess;
+        }
+      );
+
+      // Mock Enter key
+      const enterProcess = createMockProcess();
+      (enterProcess.on as ReturnType<typeof vi.fn>).mockImplementation(
+        (event: string, callback: (code: number) => void) => {
+          if (event === "close") {
+            setTimeout(() => callback(0), 0);
+          }
+          return enterProcess;
+        }
+      );
+
+      mockSpawn
+        .mockReturnValueOnce(hasSessionProcess)
+        .mockReturnValueOnce(sendKeysProcess)
+        .mockReturnValueOnce(enterProcess);
+
+      // Prompt with shell metacharacters that need escaping
+      const dangerousPrompt = 'echo "$HOME" && `whoami`';
+      await injectPromptToTmux(dangerousPrompt, "test-session");
+
+      // Check that send-keys was called with escaped prompt
+      const sendKeysCall = mockSpawn.mock.calls[1];
+      expect(sendKeysCall[0]).toBe("tmux");
+      expect(sendKeysCall[1]).toContain("-l"); // Literal mode flag
+
+      // The escaped prompt should have $, `, and " escaped
+      const escapedPrompt = sendKeysCall[1][sendKeysCall[1].length - 1];
+      expect(escapedPrompt).toContain("\\$HOME"); // $ escaped
+      expect(escapedPrompt).toContain("\\`whoami\\`"); // backticks escaped
+    });
   });
 
   describe("executeJob", () => {

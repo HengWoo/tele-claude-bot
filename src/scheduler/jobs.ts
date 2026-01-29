@@ -32,13 +32,18 @@ export interface JobResult {
 }
 
 /**
- * Escape backslashes and double quotes for tmux send-keys.
- * Note: Protection relies on using the -l (literal) flag in send-keys.
- * Without -l flag, additional escaping would be required.
+ * Escape text for safe injection via tmux send-keys -l (literal mode).
+ * The -l flag handles most special characters, but we still need to escape
+ * shell metacharacters since the command goes through spawn.
  */
 function escapeForTmux(text: string): string {
-  // Escape backslashes first, then double quotes
-  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  // Escape backslashes first, then double quotes for shell safety
+  // Newlines are handled correctly by tmux send-keys -l in literal mode
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$")      // Escape shell variable expansion
+    .replace(/`/g, "\\`");      // Escape backtick command substitution
 }
 
 /**

@@ -165,9 +165,11 @@ export class ApprovalHandler {
         reply_markup: keyboard,
       });
 
-      // Set up timeout handler
-      const timeoutHandle = setTimeout(async () => {
-        await this.handleTimeout(request.id);
+      // Set up timeout handler with error handling to prevent unhandled rejections
+      const timeoutHandle = setTimeout(() => {
+        this.handleTimeout(request.id).catch((error) => {
+          logger.error({ error, requestId: request.id }, "Error in timeout handler");
+        });
       }, TIMEOUT_MS);
 
       // Store pending request

@@ -252,6 +252,44 @@ describe("ApprovalWatcher", () => {
       expect(receivedRequest.timestamp).toBeDefined();
       expect(receivedRequest.status).toBe("pending");
     });
+
+    it("should validate status field and default to pending for invalid values", async () => {
+      const requestWithInvalidStatus = {
+        id: "invalid-status-id",
+        toolName: "Bash",
+        toolInput: { command: "ls" },
+        status: "invalid_status_value",
+      };
+      vi.mocked(readFile).mockResolvedValueOnce(JSON.stringify(requestWithInvalidStatus));
+
+      const requestHandler = vi.fn();
+      watcher.on("request", requestHandler);
+
+      mockWatcher.emit("add", "/test/approvals/invalid-status.request");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const receivedRequest = requestHandler.mock.calls[0][0] as ApprovalRequest;
+      expect(receivedRequest.status).toBe("pending");
+    });
+
+    it("should accept valid status values", async () => {
+      const requestWithApprovedStatus = {
+        id: "approved-status-id",
+        toolName: "Read",
+        toolInput: { file_path: "/test.txt" },
+        status: "approved",
+      };
+      vi.mocked(readFile).mockResolvedValueOnce(JSON.stringify(requestWithApprovedStatus));
+
+      const requestHandler = vi.fn();
+      watcher.on("request", requestHandler);
+
+      mockWatcher.emit("add", "/test/approvals/approved-status.request");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const receivedRequest = requestHandler.mock.calls[0][0] as ApprovalRequest;
+      expect(receivedRequest.status).toBe("approved");
+    });
   });
 
   describe("getApprovalDir", () => {

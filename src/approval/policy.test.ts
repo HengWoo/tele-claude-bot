@@ -426,6 +426,40 @@ describe("approval policy", () => {
         const result = evaluatePolicy("Bash", { command: "ls" }, customPolicy);
         expect(result).toBe("auto-deny");
       });
+
+      it("should truncate very long inputs to prevent ReDoS", () => {
+        // Create a very long input that could cause ReDoS with certain patterns
+        const longInput = "a".repeat(20000);
+        const policy: ApprovalPolicy = {
+          rules: [{ pattern: "dangerous", action: "auto-deny", description: "Test" }],
+          defaultAction: "require-approval",
+          timeoutSeconds: 300,
+        };
+
+        // Should complete without hanging even with very long input
+        const startTime = Date.now();
+        const result = evaluatePolicy("Bash", { command: longInput }, policy);
+        const elapsed = Date.now() - startTime;
+
+        expect(result).toBe("require-approval");
+        // Should complete in under 1 second (truncation prevents long regex matching)
+        expect(elapsed).toBeLessThan(1000);
+      });
+
+      it("should handle invalid regex patterns gracefully", () => {
+        const policyWithBadRegex: ApprovalPolicy = {
+          rules: [
+            { pattern: "[invalid(regex", action: "auto-deny", description: "Bad regex" },
+            { pattern: "^Read$", action: "auto-approve", description: "Valid regex" },
+          ],
+          defaultAction: "require-approval",
+          timeoutSeconds: 300,
+        };
+
+        // Should not throw, should skip invalid regex and continue to valid one
+        const result = evaluatePolicy("Read", { file_path: "/test.txt" }, policyWithBadRegex);
+        expect(result).toBe("auto-approve");
+      });
     });
   });
 
