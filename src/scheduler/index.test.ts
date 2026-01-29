@@ -309,6 +309,30 @@ describe("Scheduler", () => {
         })
       );
     });
+
+    it("should catch exceptions from executeJob", async () => {
+      vi.mocked(executeJob).mockRejectedValueOnce(new Error("Unexpected error"));
+      const task = createTask({ id: "exception-test" });
+
+      let cronCallback: () => Promise<void>;
+      vi.mocked(cron.schedule).mockImplementationOnce((_schedule, callback) => {
+        cronCallback = callback as () => Promise<void>;
+        return mockCronTask as unknown as import("node-cron").ScheduledTask;
+      });
+
+      scheduler.scheduleTask(task);
+      // Should not throw
+      await expect(cronCallback!()).resolves.not.toThrow();
+
+      // Should update task with error
+      expect(mockStorage.updateTask).toHaveBeenCalledWith(
+        task.id,
+        expect.objectContaining({
+          lastRunSuccess: false,
+          lastError: "Unexpected error",
+        })
+      );
+    });
   });
 
   describe("addTask", () => {

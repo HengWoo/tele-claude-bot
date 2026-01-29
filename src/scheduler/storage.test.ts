@@ -65,8 +65,10 @@ describe("ScheduleStorage", () => {
 
       void new ScheduleStorage();
 
-      // Verify it tried to check the default path
-      expect(mockFs.existsSync).toHaveBeenCalledWith("data/schedules.json");
+      // Verify it tried to check the default path (absolute path based on module location)
+      expect(mockFs.existsSync).toHaveBeenCalledWith(
+        expect.stringContaining("data/schedules.json")
+      );
     });
 
     it("should create instance with custom path", () => {

@@ -25,7 +25,13 @@ export class ApprovalService {
       try {
         await this.handler.handleRequest(request);
       } catch (error) {
-        logger.error({ error, requestId: request.id }, "Failed to handle approval request");
+        logger.error({ error, requestId: request.id }, "Failed to handle approval request - auto-denying");
+        // Write denial response so Claude doesn't hang
+        try {
+          await this.handler.writeResponse(request.id, false);
+        } catch (writeError) {
+          logger.error({ writeError, requestId: request.id }, "Failed to write denial response - Claude will hang");
+        }
       }
     });
 

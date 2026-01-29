@@ -185,9 +185,19 @@ export function loadPolicy(): ApprovalPolicy {
     const err = error as NodeJS.ErrnoException;
     if (err.code === "ENOENT") {
       logger.debug({ path: POLICY_FILE_PATH }, "Policy file not found, using defaults");
-    } else {
-      logger.warn({ error: err.message, path: POLICY_FILE_PATH }, "Failed to load policy file, using defaults");
+      return DEFAULT_POLICY;
     }
+    if (error instanceof SyntaxError) {
+      logger.error(
+        { path: POLICY_FILE_PATH, error: err.message },
+        "Policy file has invalid JSON - fix or delete to use defaults"
+      );
+      throw new Error(`Invalid JSON in policy file: ${err.message}`);
+    }
+    logger.error(
+      { error: err.message, path: POLICY_FILE_PATH },
+      "Failed to load policy file - using defaults may affect security"
+    );
     return DEFAULT_POLICY;
   }
 }
@@ -196,13 +206,22 @@ export function loadPolicy(): ApprovalPolicy {
  * Save approval policy to config file
  */
 export function savePolicy(policy: ApprovalPolicy): void {
-  // Ensure data directory exists
-  const dataDir = path.dirname(POLICY_FILE_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
+  try {
+    // Ensure data directory exists
+    const dataDir = path.dirname(POLICY_FILE_PATH);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
 
-  fs.writeFileSync(POLICY_FILE_PATH, JSON.stringify(policy, null, 2), "utf-8");
+    fs.writeFileSync(POLICY_FILE_PATH, JSON.stringify(policy, null, 2), "utf-8");
+    logger.info({ path: POLICY_FILE_PATH }, "Saved policy file");
+  } catch (error) {
+    logger.error(
+      { error: (error as Error).message, path: POLICY_FILE_PATH },
+      "Failed to save policy file"
+    );
+    throw error;
+  }
 }
 
 /**

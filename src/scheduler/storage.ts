@@ -1,10 +1,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { ScheduledTask } from "../types.js";
 import { createChildLogger } from "../utils/logger.js";
 
 const logger = createChildLogger("scheduler-storage");
+
+// Project root directory (works in both ESM and compiled scenarios)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DEFAULT_DATA_PATH = path.join(__dirname, "../../data/schedules.json");
 
 const DEFAULT_SCHEDULES: ScheduledTask[] = [
   {
@@ -29,7 +35,7 @@ export class ScheduleStorage {
   private dataPath: string;
   private tasks: ScheduledTask[] = [];
 
-  constructor(dataPath: string = "data/schedules.json") {
+  constructor(dataPath: string = DEFAULT_DATA_PATH) {
     this.dataPath = dataPath;
     this.tasks = this.load();
   }

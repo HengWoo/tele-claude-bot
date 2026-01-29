@@ -28,6 +28,7 @@ export class VetoWatcher {
   private lastSize = 0;
   private running = false;
   private processing = false;
+  private pendingRecheck = false;
 
   constructor(bot: Bot<BotContext>, chatId: number) {
     this.bot = bot;
@@ -96,9 +97,10 @@ export class VetoWatcher {
   }
 
   private async handleLogChange(): Promise<void> {
-    // Prevent concurrent processing
+    // Prevent concurrent processing, but queue a recheck
     if (this.processing) {
-      logger.debug("Already processing log change, skipping");
+      this.pendingRecheck = true;
+      logger.debug("Change detected during processing, will recheck");
       return;
     }
 
@@ -129,6 +131,11 @@ export class VetoWatcher {
       logger.error({ error }, "Failed to read blocked operations log");
     } finally {
       this.processing = false;
+      // Process any changes that occurred during processing
+      if (this.pendingRecheck) {
+        this.pendingRecheck = false;
+        await this.handleLogChange();
+      }
     }
   }
 

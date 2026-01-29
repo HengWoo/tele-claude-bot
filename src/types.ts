@@ -123,6 +123,7 @@ export interface ApprovalRequest {
   id: string;
   toolName: string;
   toolInput: Record<string, unknown> | string;
+  /** Unix timestamp in seconds (not milliseconds) */
   timestamp: number;
   status: ApprovalStatus;
   responseAt?: number;

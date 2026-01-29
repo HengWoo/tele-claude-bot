@@ -148,24 +148,26 @@ describe("VetoWatcher", () => {
       );
     });
 
-    it("should prevent concurrent processing", async () => {
+    it("should queue and reprocess missed changes during concurrent processing", async () => {
       // Slow down the read to allow concurrent calls
       let resolveRead: (value: string) => void;
       const readPromise = new Promise<string>((resolve) => {
         resolveRead = resolve;
       });
-      vi.mocked(readFile).mockReturnValueOnce(readPromise as Promise<string>);
+      vi.mocked(readFile)
+        .mockReturnValueOnce(readPromise as Promise<string>)
+        .mockResolvedValueOnce(""); // For the recheck
 
       // Trigger two changes simultaneously
       mockWatcher.emit("change");
       mockWatcher.emit("change");
 
-      // Resolve the read
+      // Resolve the read and wait for recheck
       resolveRead!("");
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // readFile should only be called once due to processing flag
-      expect(readFile).toHaveBeenCalledTimes(1);
+      // readFile should be called twice - once for initial change, once for queued recheck
+      expect(readFile).toHaveBeenCalledTimes(2);
     });
 
     it("should handle parse errors for malformed JSON", async () => {

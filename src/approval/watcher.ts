@@ -161,11 +161,12 @@ export class ApprovalWatcher extends EventEmitter {
       }
 
       // Build the approval request with defaults for optional fields
+      // Note: timestamp is in seconds (Unix timestamp), not milliseconds
       const request: ApprovalRequest = {
         id: parsed.id,
         toolName: parsed.toolName,
         toolInput: parsed.toolInput,
-        timestamp: typeof parsed.timestamp === "number" ? parsed.timestamp : Date.now(),
+        timestamp: typeof parsed.timestamp === "number" ? parsed.timestamp : Math.floor(Date.now() / 1000),
         status: parsed.status ?? "pending",
         responseAt: parsed.responseAt,
       };

@@ -40,19 +40,25 @@ import { evaluatePolicy } from "./policy.js";
 import type { Bot } from "grammy";
 import type { BotContext } from "../types.js";
 
-// Create a mock bot
+// Create a mock bot with properly typed methods for testing
 function createMockBot() {
-  return {
+  const bot = {
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 123 }),
       editMessageText: vi.fn().mockResolvedValue({}),
     },
-  } as unknown as Bot<BotContext>;
+  };
+  return bot;
 }
 
 describe("ApprovalHandler", () => {
   let handler: ApprovalHandler;
-  let mockBot: ReturnType<typeof createMockBot>;
+  let mockBot: {
+    api: {
+      sendMessage: ReturnType<typeof vi.fn>;
+      editMessageText: ReturnType<typeof vi.fn>;
+    };
+  };
   const chatId = 12345;
 
   // Helper to create a request
@@ -114,6 +120,18 @@ describe("ApprovalHandler", () => {
           reply_markup: expect.any(Object),
         })
       );
+    });
+
+    it("should auto-deny when sendMessage fails", async () => {
+      vi.mocked(evaluatePolicy).mockReturnValue("require-approval");
+      mockBot.api.sendMessage.mockRejectedValueOnce(new Error("Telegram API error"));
+
+      const request = createRequest({ id: "send-fail-test" });
+      await handler.handleRequest(request);
+
+      expect(mockWriteFile).toHaveBeenCalled();
+      const [, content] = mockWriteFile.mock.calls[0];
+      expect(JSON.parse(content as string)).toEqual({ approved: false });
     });
 
     it("should write response file on auto-approve", async () => {

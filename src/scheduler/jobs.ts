@@ -32,8 +32,9 @@ export interface JobResult {
 }
 
 /**
- * Escape text for safe tmux send-keys injection
- * Handles special characters that tmux might interpret
+ * Escape backslashes and double quotes for tmux send-keys.
+ * Note: Protection relies on using the -l (literal) flag in send-keys.
+ * Without -l flag, additional escaping would be required.
  */
 function escapeForTmux(text: string): string {
   // Escape backslashes first, then double quotes
@@ -198,7 +199,10 @@ async function checkTmuxSession(session: string): Promise<boolean> {
 
     process.on("error", (err) => {
       // spawn failed - tmux binary not found
-      logger.debug({ error: err.message, session }, "tmux has-session spawn failed");
+      logger.warn(
+        { error: err.message, session },
+        "tmux binary not available - scheduled jobs will fail"
+      );
       resolve(false);
     });
   });
@@ -240,7 +244,10 @@ export async function listTmuxSessions(): Promise<string[]> {
 
     process.on("error", (err) => {
       // spawn failed - tmux binary not found
-      logger.debug({ error: err.message }, "tmux list-sessions spawn failed");
+      logger.warn(
+        { error: err.message },
+        "tmux binary not available - cannot list sessions"
+      );
       resolve([]);
     });
   });

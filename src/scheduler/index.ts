@@ -104,27 +104,38 @@ export class Scheduler {
       const cronTask = cron.schedule(
         task.schedule,
         async () => {
-          logger.info({ taskId: task.id, taskName: task.name }, "Cron job triggered");
+          try {
+            logger.info({ taskId: task.id, taskName: task.name }, "Cron job triggered");
 
-          const success = await executeJob(task);
+            const success = await executeJob(task);
 
-          if (success) {
-            // Update lastRun and mark success
-            this.storage.updateTask(task.id, {
-              lastRun: Date.now(),
-              lastRunSuccess: true,
-              lastError: undefined,
-            });
-          } else {
-            // Mark failure with error
+            if (success) {
+              // Update lastRun and mark success
+              this.storage.updateTask(task.id, {
+                lastRun: Date.now(),
+                lastRunSuccess: true,
+                lastError: undefined,
+              });
+            } else {
+              // Mark failure with error
+              this.storage.updateTask(task.id, {
+                lastRunSuccess: false,
+                lastError: "Job execution failed",
+              });
+              logger.warn(
+                { taskId: task.id, taskName: task.name },
+                "Scheduled job execution failed"
+              );
+            }
+          } catch (error) {
+            logger.error(
+              { error, taskId: task.id, taskName: task.name },
+              "Cron job threw exception"
+            );
             this.storage.updateTask(task.id, {
               lastRunSuccess: false,
-              lastError: "Job execution failed",
+              lastError: (error as Error).message,
             });
-            logger.warn(
-              { taskId: task.id, taskName: task.name },
-              "Scheduled job execution failed"
-            );
           }
         },
         {

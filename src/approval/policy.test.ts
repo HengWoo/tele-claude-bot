@@ -1,13 +1,156 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   evaluatePolicy,
   shouldAutoApprove,
   shouldAutoDeny,
+  loadPolicy,
+  savePolicy,
   DEFAULT_POLICY,
 } from "./policy.js";
 import type { ApprovalPolicy } from "../types.js";
+import * as fs from "fs";
+
+// Mock fs module
+vi.mock("fs", async () => {
+  const actual = await vi.importActual("fs");
+  return {
+    ...actual,
+    existsSync: vi.fn(),
+    readFileSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
+  };
+});
+
+// Mock logger
+vi.mock("../utils/logger.js", () => ({
+  createChildLogger: vi.fn(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  })),
+}));
 
 describe("approval policy", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe("loadPolicy", () => {
+    it("should return DEFAULT_POLICY when file does not exist", () => {
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+
+      const policy = loadPolicy();
+
+      expect(policy).toEqual(DEFAULT_POLICY);
+    });
+
+    it("should load and parse policy from existing file", () => {
+      const customPolicy: ApprovalPolicy = {
+        rules: [{ pattern: "test", action: "auto-approve", description: "Test rule" }],
+        defaultAction: "auto-deny",
+        timeoutSeconds: 600,
+      };
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(customPolicy));
+
+      const policy = loadPolicy();
+
+      expect(policy.rules).toEqual(customPolicy.rules);
+      expect(policy.defaultAction).toBe("auto-deny");
+      expect(policy.timeoutSeconds).toBe(600);
+    });
+
+    it("should merge with defaults for missing fields", () => {
+      const partialPolicy = { rules: [] };
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(partialPolicy));
+
+      const policy = loadPolicy();
+
+      expect(policy.rules).toEqual([]);
+      expect(policy.defaultAction).toBe(DEFAULT_POLICY.defaultAction);
+      expect(policy.timeoutSeconds).toBe(DEFAULT_POLICY.timeoutSeconds);
+    });
+
+    it("should throw on JSON parse errors", () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue("{ invalid json }");
+
+      expect(() => loadPolicy()).toThrow("Invalid JSON in policy file");
+    });
+
+    it("should return defaults on ENOENT error during read", () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      const error = new Error("File not found") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      vi.mocked(fs.readFileSync).mockImplementation(() => {
+        throw error;
+      });
+
+      const policy = loadPolicy();
+
+      expect(policy).toEqual(DEFAULT_POLICY);
+    });
+  });
+
+  describe("savePolicy", () => {
+    it("should create directory if not exists", () => {
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+
+      const policy: ApprovalPolicy = {
+        rules: [],
+        defaultAction: "require-approval",
+        timeoutSeconds: 300,
+      };
+
+      savePolicy(policy);
+
+      expect(fs.mkdirSync).toHaveBeenCalledWith(expect.any(String), { recursive: true });
+    });
+
+    it("should write valid JSON to file", () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
+
+      const policy: ApprovalPolicy = {
+        rules: [{ pattern: "test", action: "auto-approve", description: "Test" }],
+        defaultAction: "require-approval",
+        timeoutSeconds: 300,
+      };
+
+      savePolicy(policy);
+
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('"pattern": "test"'),
+        "utf-8"
+      );
+    });
+
+    it("should throw on write errors", () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.writeFileSync).mockImplementation(() => {
+        throw new Error("Permission denied");
+      });
+
+      const policy: ApprovalPolicy = {
+        rules: [],
+        defaultAction: "require-approval",
+        timeoutSeconds: 300,
+      };
+
+      expect(() => savePolicy(policy)).toThrow("Permission denied");
+    });
+  });
+
   describe("evaluatePolicy", () => {
     describe("dangerous commands (auto-deny)", () => {
       it("should return auto-deny for rm -rf /", () => {
