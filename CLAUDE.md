@@ -74,9 +74,7 @@ Why local > VPS:
 - Physical control over tmux sessions and Claude instances
 - Authorization + approval system = only you can interact
 
-Worktree layout:
-- `tele_bot/` (main) - stable running instance
-- `tele_bot-dev/` (develop) - sandbox for experiments
+**Recommended:** Use git worktrees to separate stable (main) and development (develop) instances.
 
 **Feishu requires Cloudflare Tunnel** (or similar) to receive webhooks:
 ```bash
