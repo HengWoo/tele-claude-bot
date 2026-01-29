@@ -68,6 +68,8 @@ export class TmuxBridge {
   };
 
   constructor() {
+    // Clean up any stale marker files on startup
+    this.cleanupAllMarkerFiles();
     // Load persisted state on startup
     this.loadPersistedState();
   }
@@ -257,7 +259,7 @@ export class TmuxBridge {
               "Done signal requestId mismatch - ignoring stale signal"
             );
             // Clean up the stale done file and continue waiting
-            try { unlinkSync(doneFile); } catch { /* ignore */ }
+            try { unlinkSync(doneFile); } catch (e) { logger.debug({ error: (e as Error).message, file: doneFile }, "Failed to delete stale done file"); }
             await this.sleep(500);
             continue;
           }
@@ -268,7 +270,7 @@ export class TmuxBridge {
               { timestamp: doneData.timestamp, age: Date.now() - doneData.timestamp },
               "Done signal is stale (>10 minutes) - ignoring"
             );
-            try { unlinkSync(doneFile); } catch { /* ignore */ }
+            try { unlinkSync(doneFile); } catch (e) { logger.debug({ error: (e as Error).message, file: doneFile }, "Failed to delete stale done file"); }
             await this.sleep(500);
             continue;
           }
@@ -532,7 +534,7 @@ export class TmuxBridge {
           try {
             unlinkSync(`${CLAUDE_DIR}/${file}`);
             logger.debug({ file }, "Cleaned up stale marker file");
-          } catch { /* ignore individual file errors */ }
+          } catch (e) { logger.debug({ error: (e as Error).message, file }, "Failed to delete marker file"); }
         }
       }
     } catch (error) {

@@ -85,8 +85,9 @@ export class Scheduler {
 
   /**
    * Schedule a single task using node-cron
+   * @returns true if task was scheduled successfully, false if cron expression is invalid
    */
-  scheduleTask(task: ScheduledTask): void {
+  scheduleTask(task: ScheduledTask): boolean {
     // Remove existing job if present
     this.unscheduleTask(task.id);
 
@@ -96,7 +97,7 @@ export class Scheduler {
         { taskId: task.id, schedule: task.schedule },
         "Invalid cron expression"
       );
-      return;
+      return false;
     }
 
     try {
@@ -107,10 +108,19 @@ export class Scheduler {
 
           const success = await executeJob(task);
 
-          // Update lastRun timestamp
-          this.storage.updateTask(task.id, { lastRun: Date.now() });
-
-          if (!success) {
+          if (success) {
+            // Update lastRun and mark success
+            this.storage.updateTask(task.id, {
+              lastRun: Date.now(),
+              lastRunSuccess: true,
+              lastError: undefined,
+            });
+          } else {
+            // Mark failure with error
+            this.storage.updateTask(task.id, {
+              lastRunSuccess: false,
+              lastError: "Job execution failed",
+            });
             logger.warn(
               { taskId: task.id, taskName: task.name },
               "Scheduled job execution failed"
@@ -134,12 +144,14 @@ export class Scheduler {
         { taskId: task.id, taskName: task.name, schedule: task.schedule },
         "Task scheduled"
       );
+      return true;
     } catch (error) {
       const err = error as Error;
       logger.error(
         { taskId: task.id, schedule: task.schedule, error: err.message },
         "Failed to schedule task"
       );
+      return false;
     }
   }
 
@@ -243,8 +255,20 @@ export class Scheduler {
 
     const success = await executeJob(task);
 
-    // Update lastRun timestamp
-    this.storage.updateTask(id, { lastRun: Date.now() });
+    if (success) {
+      // Update lastRun and mark success
+      this.storage.updateTask(id, {
+        lastRun: Date.now(),
+        lastRunSuccess: true,
+        lastError: undefined,
+      });
+    } else {
+      // Mark failure with error
+      this.storage.updateTask(id, {
+        lastRunSuccess: false,
+        lastError: "Job execution failed",
+      });
+    }
 
     return success;
   }

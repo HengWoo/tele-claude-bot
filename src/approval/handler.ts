@@ -246,8 +246,14 @@ export class ApprovalHandler {
     for (const [requestId, pending] of this.pendingRequests) {
       clearTimeout(pending.timeoutHandle);
       // Auto-deny any remaining pending requests
+      // Separate try blocks so editMessageText runs even if writeResponse fails
       try {
         await this.writeResponse(requestId, false);
+      } catch (error) {
+        logger.warn({ error, requestId }, "Failed to write denial response on shutdown");
+      }
+
+      try {
         await this.bot.api.editMessageText(
           this.chatId,
           pending.messageId,
@@ -255,7 +261,7 @@ export class ApprovalHandler {
           { parse_mode: "HTML" }
         );
       } catch (error) {
-        logger.warn({ error, requestId }, "Failed to cleanup pending request on shutdown");
+        logger.warn({ error, requestId }, "Failed to update message on shutdown");
       }
     }
 

@@ -2,6 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import type { PolicyRule, PolicyAction, ApprovalPolicy } from "../types.js";
+import { createChildLogger } from "../utils/logger.js";
+
+const logger = createChildLogger("policy");
 
 // Project root directory (works in both ESM and compiled scenarios)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -10,7 +13,7 @@ const POLICY_FILE_PATH = path.join(PROJECT_ROOT, "data", "approval-policy.json")
 
 /**
  * Dangerous patterns that should be auto-denied
- * These patterns match against tool input strings
+ * These patterns match against both tool names and tool input strings
  */
 const DANGEROUS_PATTERNS: PolicyRule[] = [
   {
@@ -106,7 +109,7 @@ const DANGEROUS_PATTERNS: PolicyRule[] = [
 ];
 
 /**
- * Safe read-only tools that should be auto-approved
+ * Safe tool name patterns that should be auto-approved
  */
 const SAFE_TOOL_PATTERNS: PolicyRule[] = [
   {
@@ -178,8 +181,13 @@ export function loadPolicy(): ApprovalPolicy {
           ? loaded.timeoutSeconds
           : DEFAULT_POLICY.timeoutSeconds,
     };
-  } catch {
-    // Return defaults on any error (file not found, parse error, etc.)
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      logger.debug({ path: POLICY_FILE_PATH }, "Policy file not found, using defaults");
+    } else {
+      logger.warn({ error: err.message, path: POLICY_FILE_PATH }, "Failed to load policy file, using defaults");
+    }
     return DEFAULT_POLICY;
   }
 }
@@ -230,8 +238,9 @@ function matchesPattern(
   try {
     const regex = new RegExp(pattern, "i");
     return regex.test(toolName) || regex.test(toolInputStr);
-  } catch {
-    // Invalid regex pattern - treat as no match
+  } catch (error) {
+    const err = error as Error;
+    logger.error({ pattern, error: err.message }, "Invalid regex pattern in policy rule");
     return false;
   }
 }

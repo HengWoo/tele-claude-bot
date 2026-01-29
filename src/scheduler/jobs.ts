@@ -196,8 +196,9 @@ async function checkTmuxSession(session: string): Promise<boolean> {
       resolve(code === 0);
     });
 
-    process.on("error", () => {
-      // tmux not installed or not running
+    process.on("error", (err) => {
+      // spawn failed - tmux binary not found
+      logger.debug({ error: err.message, session }, "tmux has-session spawn failed");
       resolve(false);
     });
   });
@@ -237,8 +238,9 @@ export async function listTmuxSessions(): Promise<string[]> {
       resolve(sessions);
     });
 
-    process.on("error", () => {
-      // tmux not installed or not running
+    process.on("error", (err) => {
+      // spawn failed - tmux binary not found
+      logger.debug({ error: err.message }, "tmux list-sessions spawn failed");
       resolve([]);
     });
   });

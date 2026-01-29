@@ -156,6 +156,8 @@ export interface ScheduledTask {
   createdAt: number;
   lastRun?: number;
   nextRun?: number;
+  lastRunSuccess?: boolean;  // Track if last run succeeded
+  lastError?: string;        // Store error message on failure
 }
 
 export interface SchedulerConfig {

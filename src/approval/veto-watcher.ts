@@ -27,6 +27,7 @@ export class VetoWatcher {
   private watcher: FSWatcher | null = null;
   private lastSize = 0;
   private running = false;
+  private processing = false;
 
   constructor(bot: Bot<BotContext>, chatId: number) {
     this.bot = bot;
@@ -43,8 +44,15 @@ export class VetoWatcher {
     try {
       const stats = await stat(BLOCKED_LOG);
       this.lastSize = stats.size;
-    } catch {
-      this.lastSize = 0;
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === "ENOENT") {
+        // File doesn't exist yet - this is expected
+        this.lastSize = 0;
+      } else {
+        logger.warn({ error: err.message, path: BLOCKED_LOG }, "Failed to stat blocked log file");
+        this.lastSize = 0;
+      }
     }
 
     // Watch for changes to the blocked log
@@ -54,11 +62,24 @@ export class VetoWatcher {
     });
 
     this.watcher.on("change", async () => {
-      await this.handleLogChange();
+      try {
+        await this.handleLogChange();
+      } catch (error) {
+        logger.error({ error: (error as Error).message }, "Error in change handler");
+      }
     });
 
     this.watcher.on("add", async () => {
-      await this.handleLogChange();
+      try {
+        await this.handleLogChange();
+      } catch (error) {
+        logger.error({ error: (error as Error).message }, "Error in add handler");
+      }
+    });
+
+    this.watcher.on("error", (error: unknown) => {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ error: err.message }, "Veto watcher error");
     });
 
     this.running = true;
@@ -75,12 +96,21 @@ export class VetoWatcher {
   }
 
   private async handleLogChange(): Promise<void> {
+    // Prevent concurrent processing
+    if (this.processing) {
+      logger.debug("Already processing log change, skipping");
+      return;
+    }
+
+    this.processing = true;
     try {
       const content = await readFile(BLOCKED_LOG, "utf-8");
       const newContent = content.slice(this.lastSize);
-      this.lastSize = content.length;
 
-      if (!newContent.trim()) return;
+      if (!newContent.trim()) {
+        this.lastSize = content.length;
+        return;
+      }
 
       // Parse new blocked operations (one JSON per line)
       const lines = newContent.trim().split("\n");
@@ -92,8 +122,13 @@ export class VetoWatcher {
           logger.warn({ line }, "Failed to parse blocked operation");
         }
       }
+
+      // Only update lastSize after successful processing
+      this.lastSize = content.length;
     } catch (error) {
       logger.error({ error }, "Failed to read blocked operations log");
+    } finally {
+      this.processing = false;
     }
   }
 
