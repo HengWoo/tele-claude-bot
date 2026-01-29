@@ -115,3 +115,53 @@ export interface ParsedCommand {
   args: string[];
   rawArgs: string;
 }
+
+// Approval system types
+export type ApprovalStatus = "pending" | "approved" | "denied" | "timeout";
+
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  toolInput: Record<string, unknown> | string;
+  /** Unix timestamp in seconds (not milliseconds) */
+  timestamp: number;
+  status: ApprovalStatus;
+  responseAt?: number;
+}
+
+export interface ApprovalResponse {
+  approved: boolean;
+}
+
+export type PolicyAction = "auto-approve" | "auto-deny" | "require-approval";
+
+export interface PolicyRule {
+  pattern: string;
+  action: PolicyAction;
+  description?: string;
+}
+
+export interface ApprovalPolicy {
+  rules: PolicyRule[];
+  defaultAction: PolicyAction;
+  timeoutSeconds: number;
+}
+
+// Scheduler types
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  schedule: string; // cron expression
+  prompt: string;
+  enabled: boolean;
+  createdAt: number;
+  lastRun?: number;
+  nextRun?: number;
+  lastRunSuccess?: boolean;  // Track if last run succeeded
+  lastError?: string;        // Store error message on failure
+}
+
+export interface SchedulerConfig {
+  enabled: boolean;
+  dataPath: string;
+}

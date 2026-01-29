@@ -56,6 +56,10 @@ export interface TmuxBridgeState {
 
 /**
  * TmuxBridge manages the connection between Telegram bot and tmux panes running Claude
+ *
+ * Note: Claude Code has internal input buffering - messages sent via tmux send-keys
+ * while Claude is busy will be queued in the prompt and processed when ready.
+ * This means we don't need our own message queue system.
  */
 export class TmuxBridge {
   private state: TmuxBridgeState = {
@@ -64,6 +68,8 @@ export class TmuxBridge {
   };
 
   constructor() {
+    // Clean up any stale marker files on startup
+    this.cleanupAllMarkerFiles();
     // Load persisted state on startup
     this.loadPersistedState();
   }
@@ -158,6 +164,9 @@ export class TmuxBridge {
 
   /**
    * Send a message to Claude via tmux and wait for response
+   *
+   * Claude Code handles input buffering internally - if Claude is busy,
+   * the message will wait in the prompt and be processed when ready.
    */
   async sendMessage(
     message: string,
@@ -169,11 +178,6 @@ export class TmuxBridge {
 
     if (!target) {
       throw new Error("Not attached to any tmux pane. Use /attach <target> first.");
-    }
-
-    // Check if there's already a pending request
-    if (this.state.pendingRequest) {
-      throw new Error("Another request is already pending. Please wait for it to complete.");
     }
 
     // Verify pane still exists
@@ -255,7 +259,7 @@ export class TmuxBridge {
               "Done signal requestId mismatch - ignoring stale signal"
             );
             // Clean up the stale done file and continue waiting
-            try { unlinkSync(doneFile); } catch { /* ignore */ }
+            try { unlinkSync(doneFile); } catch (e) { logger.debug({ error: (e as Error).message, file: doneFile }, "Failed to delete stale done file"); }
             await this.sleep(500);
             continue;
           }
@@ -266,7 +270,7 @@ export class TmuxBridge {
               { timestamp: doneData.timestamp, age: Date.now() - doneData.timestamp },
               "Done signal is stale (>10 minutes) - ignoring"
             );
-            try { unlinkSync(doneFile); } catch { /* ignore */ }
+            try { unlinkSync(doneFile); } catch (e) { logger.debug({ error: (e as Error).message, file: doneFile }, "Failed to delete stale done file"); }
             await this.sleep(500);
             continue;
           }
@@ -530,7 +534,7 @@ export class TmuxBridge {
           try {
             unlinkSync(`${CLAUDE_DIR}/${file}`);
             logger.debug({ file }, "Cleaned up stale marker file");
-          } catch { /* ignore individual file errors */ }
+          } catch (e) { logger.debug({ error: (e as Error).message, file }, "Failed to delete marker file"); }
         }
       }
     } catch (error) {
