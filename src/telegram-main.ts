@@ -42,8 +42,15 @@ async function migrateFromLegacy(): Promise<void> {
   const newState = `${claudeDir}/telegram-bridge.json`;
 
   if (existsSync(oldState) && !existsSync(newState)) {
-    copyFileSync(oldState, newState);
-    logger.info("Migrated tg-state.json → telegram-bridge.json");
+    try {
+      copyFileSync(oldState, newState);
+      logger.info("Migrated tg-state.json → telegram-bridge.json");
+    } catch (error) {
+      logger.warn(
+        { error: (error as Error).message, oldState, newState },
+        "Failed to migrate bridge state - starting fresh (old file preserved)"
+      );
+    }
   }
 
   // Migrate sessions file
@@ -51,13 +58,20 @@ async function migrateFromLegacy(): Promise<void> {
   const newSessions = "./data/telegram-sessions.json";
 
   if (existsSync(oldSessions) && !existsSync(newSessions)) {
-    // Ensure data directory exists
-    const dir = dirname(newSessions);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    try {
+      // Ensure data directory exists
+      const dir = dirname(newSessions);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      copyFileSync(oldSessions, newSessions);
+      logger.info("Migrated sessions.json → telegram-sessions.json");
+    } catch (error) {
+      logger.warn(
+        { error: (error as Error).message, oldSessions, newSessions },
+        "Failed to migrate sessions - starting fresh (old file preserved)"
+      );
     }
-    copyFileSync(oldSessions, newSessions);
-    logger.info("Migrated sessions.json → telegram-sessions.json");
   }
 }
 
@@ -219,7 +233,7 @@ async function main(): Promise<void> {
     await migrateFromLegacy();
 
     // Clean up stale pending files from crashed sessions (older than 10 minutes)
-    const stalePendingRemoved = cleanupStalePendingFiles(10 * 60 * 1000);
+    const stalePendingRemoved = cleanupStalePendingFiles(PLATFORM, 10 * 60 * 1000);
     if (stalePendingRemoved > 0) {
       logger.info({ count: stalePendingRemoved }, "Cleaned up stale pending files on startup");
     }

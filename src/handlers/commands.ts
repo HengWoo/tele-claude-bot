@@ -6,9 +6,6 @@ import { SessionManager } from "../sessions/manager.js";
 import { createChildLogger } from "../utils/logger.js";
 import { getConfig } from "../config.js";
 import { getTmuxBridge, type Platform } from "../tmux/bridge.js";
-
-// Default platform for command handlers (Telegram)
-const PLATFORM: Platform = "telegram";
 import {
   listPanes,
   listSessions,
@@ -18,6 +15,9 @@ import {
 } from "../tmux/index.js";
 
 const logger = createChildLogger("command-handler");
+
+// Default platform for command handlers (Telegram)
+const PLATFORM: Platform = "telegram";
 
 /**
  * Expand ~ to home directory in paths and validate against directory traversal

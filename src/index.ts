@@ -216,7 +216,10 @@ async function main(): Promise<void> {
 
   try {
     // Clean up stale pending files from crashed sessions (older than 10 minutes)
-    const stalePendingRemoved = cleanupStalePendingFiles(10 * 60 * 1000);
+    // In legacy mode, clean up both platforms
+    const telegramStaleRemoved = cleanupStalePendingFiles("telegram", 10 * 60 * 1000);
+    const feishuStaleRemoved = cleanupStalePendingFiles("feishu", 10 * 60 * 1000);
+    const stalePendingRemoved = telegramStaleRemoved + feishuStaleRemoved;
     if (stalePendingRemoved > 0) {
       logger.info({ count: stalePendingRemoved }, "Cleaned up stale pending files on startup");
     }
@@ -365,8 +368,11 @@ function setupFeishuHandlers(
           // Clean up the placeholder "..." message
           try {
             await adapter.deleteMessage(chatId, initialMsg.id);
-          } catch {
-            // Best-effort cleanup, ignore failures
+          } catch (deleteError) {
+            logger.debug(
+              { messageId: initialMsg.id, error: (deleteError as Error).message },
+              "Best-effort cleanup: failed to delete placeholder message"
+            );
           }
         }
       }

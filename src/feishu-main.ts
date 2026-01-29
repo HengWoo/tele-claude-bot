@@ -13,6 +13,7 @@ import { createChildLogger } from "./utils/logger.js";
 import type { Session } from "./types.js";
 import { getTmuxBridge, type Platform } from "./tmux/bridge.js";
 import { FeishuAdapter } from "./platforms/feishu/index.js";
+import { cleanupStalePendingFiles } from "./approval/index.js";
 
 const logger = createChildLogger("feishu-main");
 const PLATFORM: Platform = "feishu";
@@ -204,8 +205,11 @@ function setupFeishuHandlers(
           await adapter.sendMessage(chatId, fullResponse);
           try {
             await adapter.deleteMessage(chatId, initialMsg.id);
-          } catch {
-            // Best-effort cleanup
+          } catch (deleteError) {
+            logger.debug(
+              { messageId: initialMsg.id, error: (deleteError as Error).message },
+              "Best-effort cleanup: failed to delete placeholder message"
+            );
           }
         }
       }
@@ -312,6 +316,12 @@ async function main(): Promise<void> {
     if (!config.feishu?.enabled) {
       logger.error("Feishu is not enabled in config. Set FEISHU_ENABLED=true in .env");
       process.exit(1);
+    }
+
+    // Clean up stale pending files from crashed sessions (older than 10 minutes)
+    const stalePendingRemoved = cleanupStalePendingFiles(PLATFORM, 10 * 60 * 1000);
+    if (stalePendingRemoved > 0) {
+      logger.info({ count: stalePendingRemoved }, "Cleaned up stale pending files on startup");
     }
 
     logger.info(
