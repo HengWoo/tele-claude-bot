@@ -20,6 +20,7 @@ export interface Config {
   claude: ClaudeConfig;
   sessions: SessionsConfig;
   notifications: NotificationsConfig;
+  feishu?: FeishuConfig;
 }
 
 export interface TelegramConfig {
@@ -164,4 +165,26 @@ export interface ScheduledTask {
 export interface SchedulerConfig {
   enabled: boolean;
   dataPath: string;
+}
+
+// Feishu configuration types
+export type FeishuDomain = "feishu" | "lark";
+
+export interface FeishuConfig {
+  /** Whether Feishu bot is enabled */
+  enabled: boolean;
+  /** Feishu App ID */
+  appId: string;
+  /** Feishu App Secret */
+  appSecret: string;
+  /** Webhook server port */
+  webhookPort: number;
+  /** Allowed Feishu user IDs (open_id format: ou_xxxxx) */
+  allowedUsers: string[];
+  /** Domain: 'feishu' for China, 'lark' for international */
+  domain: FeishuDomain;
+  /** Optional verification token for webhook security */
+  verificationToken?: string;
+  /** Optional encrypt key for webhook encryption */
+  encryptKey?: string;
 }

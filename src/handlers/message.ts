@@ -9,9 +9,9 @@ const logger = createChildLogger("message-handler");
 // These will be implemented in separate modules
 
 export interface SessionManager {
-  getActiveSession(userId: number): Session | null;
-  createSession(userId: number, name: string, workspace?: string): Session;
-  setActiveSession(userId: number, sessionId: string): void;
+  getActiveSession(userId: string): Session | null;
+  createSession(userId: string, name: string, workspace?: string): Session;
+  setActiveSession(userId: string, sessionId: string): void;
 }
 
 export interface ClaudeBridge {
@@ -43,18 +43,19 @@ export async function handleTextMessage(
   logger.info({ userId, messageLength: messageText.length }, "Processing text message");
 
   try {
-    // Get or create active session
-    let session = sessionManager.getActiveSession(userId);
+    // Get or create active session (convert numeric Telegram ID to string)
+    const userIdStr = String(userId);
+    let session = sessionManager.getActiveSession(userIdStr);
 
     if (!session) {
       const config = getConfig();
       logger.info({ userId }, "No active session, creating default");
       session = sessionManager.createSession(
-        userId,
+        userIdStr,
         "default",
         config.claude.defaultWorkspace
       );
-      sessionManager.setActiveSession(userId, session.id);
+      sessionManager.setActiveSession(userIdStr, session.id);
     }
 
     // Update last used timestamp
