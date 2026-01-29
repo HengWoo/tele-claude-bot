@@ -90,7 +90,11 @@ export class FeishuAdapter implements PlatformAdapter {
         try {
           const content = JSON.parse(message.content);
           textContent = content.text || "";
-        } catch {
+        } catch (error) {
+          logger.warn(
+            { messageId: message.message_id, error: (error as Error).message },
+            "Failed to parse text message JSON, using raw content"
+          );
           textContent = message.content;
         }
       } else if (message.message_type === "post") {
@@ -98,7 +102,11 @@ export class FeishuAdapter implements PlatformAdapter {
         try {
           const content = JSON.parse(message.content);
           textContent = this.extractPostText(content);
-        } catch {
+        } catch (error) {
+          logger.warn(
+            { messageId: message.message_id, error: (error as Error).message },
+            "Failed to parse post message JSON, using raw content"
+          );
           textContent = message.content;
         }
       } else if (message.message_type === "image" || message.message_type === "file") {
@@ -232,8 +240,17 @@ export class FeishuAdapter implements PlatformAdapter {
         fileName = content.file_name || "file";
         fileType = "document";
       }
-    } catch {
-      logger.warn({ messageId: message.message_id }, "Failed to parse file content");
+    } catch (error) {
+      logger.warn(
+        { messageId: message.message_id, error: (error as Error).message },
+        "Failed to parse file content"
+      );
+      // Notify user that file couldn't be processed
+      try {
+        await this.sendMessage(message.chat_id, "Sorry, I couldn't process your file. Please try a different format.");
+      } catch {
+        // Ignore send failure
+      }
       return;
     }
 
@@ -294,6 +311,15 @@ export class FeishuAdapter implements PlatformAdapter {
     logger.info("Starting Feishu adapter...");
     await this.server.start();
     this.running = true;
+
+    // Warn if no allowed users configured (auth bypass for testing)
+    if (this.config.allowedUsers.length === 0) {
+      logger.warn(
+        "SECURITY: No FEISHU_ALLOWED_USERS configured - all users can interact with the bot. " +
+        "Configure allowed user IDs in production."
+      );
+    }
+
     logger.info({ port: this.config.webhookPort }, "Feishu adapter started");
   }
 

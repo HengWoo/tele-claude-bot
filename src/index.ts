@@ -138,17 +138,17 @@ function createClaudeBridgeAdapter() {
  * expected by the message handler
  */
 function createSessionManagerAdapter(manager: ReturnType<typeof createSessionManager>) {
-  // Map user IDs to their active session names
-  const userActiveSessions = new Map<number, string>();
+  // Map user IDs to their active session names (string to support both Telegram numeric and Feishu string IDs)
+  const userActiveSessions = new Map<string, string>();
 
   return {
-    getActiveSession(userId: number): Session | null {
+    getActiveSession(userId: string): Session | null {
       const sessionName = userActiveSessions.get(userId);
       if (!sessionName) return null;
       return manager.get(sessionName) ?? null;
     },
 
-    createSession(userId: number, name: string, workspace?: string): Session {
+    createSession(userId: string, name: string, workspace?: string): Session {
       const config = getConfig();
       // This is synchronous but returns a promise, we need to handle it
       // For simplicity, we'll create synchronously here
@@ -173,7 +173,7 @@ function createSessionManagerAdapter(manager: ReturnType<typeof createSessionMan
       return session;
     },
 
-    setActiveSession(userId: number, sessionId: string): void {
+    setActiveSession(userId: string, sessionId: string): void {
       // Find session by ID
       const sessions = manager.list();
       const session = sessions.find((s) => s.id === sessionId);
@@ -292,7 +292,7 @@ function setupFeishuHandlers(
 ): void {
   // Handle regular messages
   adapter.onMessage(async (event) => {
-    const userId = parseInt(event.message.from.id, 10) || 0;
+    const userId = event.message.from.id; // Use string ID directly (Feishu IDs are strings like ou_xxxxx)
     const text = event.message.text || "";
     const chatId = event.message.chat.id;
 
@@ -326,9 +326,17 @@ function setupFeishuHandlers(
         fullResponse += chunk;
       }
 
-      // Update with final response
+      // Update with final response (fallback to new message if edit fails)
       if (fullResponse.trim()) {
-        await adapter.editMessage(chatId, initialMsg.id, fullResponse);
+        try {
+          await adapter.editMessage(chatId, initialMsg.id, fullResponse);
+        } catch (editError) {
+          logger.warn(
+            { messageId: initialMsg.id, error: (editError as Error).message },
+            "Failed to edit message, sending as new message"
+          );
+          await adapter.sendMessage(chatId, fullResponse);
+        }
       }
     } catch (error) {
       const err = error as Error;
