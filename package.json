@@ -6,8 +6,12 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:telegram": "tsx watch src/telegram-main.ts",
+    "dev:feishu": "tsx watch src/feishu-main.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:telegram": "node dist/telegram-main.js",
+    "start:feishu": "node dist/feishu-main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",

@@ -105,8 +105,8 @@ export { policy };
 
 // Re-export context detection utilities
 export {
-  hasPendingTelegramRequest,
-  getPendingTelegramFiles,
+  hasPendingRequest,
+  getPendingFiles,
   cleanupStalePendingFiles,
 } from "./context.js";
 

@@ -1,43 +1,27 @@
 /**
- * Legacy multi-platform entry point
+ * Feishu-specific entry point
  *
- * DEPRECATED: This entry point runs both Telegram and Feishu in the same process,
- * sharing tmux bridge state. This can cause issues when both platforms try to
- * attach to different tmux panes.
- *
- * Recommended: Use platform-specific entry points instead:
- *   - npm run start:telegram  (or dev:telegram)
- *   - npm run start:feishu    (or dev:feishu)
- *
- * This allows each platform to have isolated state and attach to different
- * Claude sessions independently.
+ * This is the recommended way to run the Feishu bot.
+ * It uses a platform-specific tmux bridge with isolated state.
  */
 import "dotenv/config";
-import { initializeBot, startBot, stopBot, bot } from "./bot.js";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { getConfig } from "./config.js";
 import { createSessionManager } from "./sessions/manager.js";
-import { approvalQueue } from "./claude/bridge.js";
 import { createChildLogger } from "./utils/logger.js";
 import type { Session } from "./types.js";
 import { getTmuxBridge, type Platform } from "./tmux/bridge.js";
-import { ApprovalService, cleanupStalePendingFiles, VetoWatcher } from "./approval/index.js";
-import { Scheduler } from "./scheduler/index.js";
-import { registerScheduleCommands } from "./handlers/schedule.js";
-import { setApprovalHandler, registerCallbackHandlers } from "./handlers/callbacks.js";
 import { FeishuAdapter } from "./platforms/feishu/index.js";
+import { cleanupStalePendingFiles } from "./approval/index.js";
 
-const logger = createChildLogger("main");
-
-// Default platform for this legacy entry point (uses telegram for backward compatibility)
-const DEFAULT_PLATFORM: Platform = "telegram";
+const logger = createChildLogger("feishu-main");
+const PLATFORM: Platform = "feishu";
 
 // Graceful shutdown handling
 let isShuttingDown = false;
 
 // Service references for shutdown
-let approvalService: ApprovalService | null = null;
-let vetoWatcher: VetoWatcher | null = null;
-let scheduler: Scheduler | null = null;
 let feishuAdapter: FeishuAdapter | null = null;
 
 async function shutdown(signal: string): Promise<void> {
@@ -47,35 +31,11 @@ async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, "Received shutdown signal");
 
   try {
-    // Stop the scheduler
-    if (scheduler) {
-      scheduler.stop();
-      logger.info("Scheduler stopped");
-    }
-
-    // Stop the approval service
-    if (approvalService) {
-      await approvalService.stop();
-      logger.info("Approval service stopped");
-    }
-
-    // Stop the veto watcher
-    if (vetoWatcher) {
-      await vetoWatcher.stop();
-      logger.info("Veto watcher stopped");
-    }
-
     // Stop the Feishu adapter
     if (feishuAdapter) {
       await feishuAdapter.stop();
       logger.info("Feishu adapter stopped");
     }
-
-    // Stop the Telegram bot
-    await stopBot();
-
-    // Clear any pending approvals
-    approvalQueue.clear();
 
     logger.info("Shutdown complete");
     process.exit(0);
@@ -101,14 +61,10 @@ process.on("uncaughtException", (error) => {
 });
 
 /**
- * Claude bridge adapter that implements the ClaudeBridge interface
- * expected by the message handler.
- *
- * This adapter uses the tmux bridge to inject messages into existing
- * Claude Code sessions running in tmux panes.
+ * Claude bridge adapter for Feishu
  */
-function createClaudeBridgeAdapter(platform: Platform = DEFAULT_PLATFORM) {
-  const bridge = getTmuxBridge(platform);
+function createClaudeBridgeAdapter() {
+  const bridge = getTmuxBridge(PLATFORM);
 
   return {
     async *sendMessage(
@@ -118,7 +74,7 @@ function createClaudeBridgeAdapter(platform: Platform = DEFAULT_PLATFORM) {
       messageId?: number
     ): AsyncGenerator<string> {
       if (!bridge.isAttached()) {
-        yield "Not attached to any tmux pane.\n\nUse /attach <target> to connect to a Claude session.\nUse /panes to see available Claude panes.";
+        yield "Not attached to any tmux pane.\n\nUse /attach <target> to connect to a Claude session.";
         return;
       }
 
@@ -145,17 +101,14 @@ function createClaudeBridgeAdapter(platform: Platform = DEFAULT_PLATFORM) {
       return bridge.isAttached();
     },
 
-    // Expose the bridge for direct access if needed
     bridge,
   };
 }
 
 /**
- * Session manager adapter that implements the SessionManager interface
- * expected by the message handler
+ * Session manager adapter for Feishu
  */
 function createSessionManagerAdapter(manager: ReturnType<typeof createSessionManager>) {
-  // Map user IDs to their active session names (string to support both Telegram numeric and Feishu string IDs)
   const userActiveSessions = new Map<string, string>();
 
   return {
@@ -167,8 +120,6 @@ function createSessionManagerAdapter(manager: ReturnType<typeof createSessionMan
 
     createSession(userId: string, name: string, workspace?: string): Session {
       const config = getConfig();
-      // This is synchronous but returns a promise, we need to handle it
-      // For simplicity, we'll create synchronously here
       const session: Session = {
         id: crypto.randomUUID(),
         name,
@@ -180,8 +131,6 @@ function createSessionManagerAdapter(manager: ReturnType<typeof createSessionMan
         notifyLevel: config.notifications.defaultLevel,
       };
 
-      // Store in manager (this needs the async create method)
-      // For now, we'll use a workaround
       manager.create({ name, workspace: session.workspace }).catch((err) => {
         logger.error({ error: err.message }, "Failed to persist session");
       });
@@ -191,7 +140,6 @@ function createSessionManagerAdapter(manager: ReturnType<typeof createSessionMan
     },
 
     setActiveSession(userId: string, sessionId: string): void {
-      // Find session by ID
       const sessions = manager.list();
       const session = sessions.find((s) => s.id === sessionId);
       if (session) {
@@ -202,117 +150,7 @@ function createSessionManagerAdapter(manager: ReturnType<typeof createSessionMan
 }
 
 /**
- * Main entry point
- */
-async function main(): Promise<void> {
-  logger.info("Starting Claude Bot (multi-platform)...");
-
-  // Deprecation warning
-  logger.warn(
-    "DEPRECATED: Using legacy multi-platform entry point. " +
-    "This mode shares tmux bridge state between platforms, which can cause issues. " +
-    "Recommended: Use 'npm run start:telegram' or 'npm run start:feishu' instead."
-  );
-
-  try {
-    // Clean up stale pending files from crashed sessions (older than 10 minutes)
-    // In legacy mode, clean up both platforms
-    const telegramStaleRemoved = cleanupStalePendingFiles("telegram", 10 * 60 * 1000);
-    const feishuStaleRemoved = cleanupStalePendingFiles("feishu", 10 * 60 * 1000);
-    const stalePendingRemoved = telegramStaleRemoved + feishuStaleRemoved;
-    if (stalePendingRemoved > 0) {
-      logger.info({ count: stalePendingRemoved }, "Cleaned up stale pending files on startup");
-    }
-
-    // Load and validate config
-    const config = getConfig();
-
-    const enabledPlatforms: string[] = ["telegram"];
-    if (config.feishu?.enabled) {
-      enabledPlatforms.push("feishu");
-    }
-
-    logger.info(
-      {
-        platforms: enabledPlatforms,
-        telegramUsers: config.telegram.allowedUsers,
-        feishuEnabled: config.feishu?.enabled ?? false,
-        defaultWorkspace: config.claude.defaultWorkspace,
-        model: config.claude.model,
-      },
-      "Configuration loaded"
-    );
-
-    // Initialize session manager
-    const sessionManager = createSessionManager(config.sessions.persistPath);
-    await sessionManager.initialize();
-    logger.info({ sessionCount: sessionManager.count }, "Session manager initialized");
-
-    // Create adapters for the bot
-    const sessionManagerAdapter = createSessionManagerAdapter(sessionManager);
-    // Create platform-specific bridge adapters (even in legacy mode, use separate bridges)
-    const telegramBridgeAdapter = createClaudeBridgeAdapter("telegram");
-    const feishuBridgeAdapter = createClaudeBridgeAdapter("feishu");
-
-    // Initialize the scheduler service
-    scheduler = new Scheduler();
-    scheduler.start();
-    logger.info("Scheduler service started");
-
-    // Register schedule commands before initializing the bot
-    registerScheduleCommands(bot, scheduler);
-
-    // Register callback handlers (including hook approval callbacks)
-    registerCallbackHandlers(bot);
-
-    // Initialize and start bot (pass real sessionManager for command registration)
-    initializeBot(sessionManagerAdapter, telegramBridgeAdapter, sessionManager);
-    await startBot();
-
-    // Initialize approval service after bot is started (needs chatId from first allowed user)
-    const primaryUserId = config.telegram.allowedUsers[0];
-    if (primaryUserId) {
-      approvalService = new ApprovalService(bot, primaryUserId);
-      await approvalService.start();
-
-      // Set the approval handler reference for callback handling
-      setApprovalHandler(approvalService.getHandler());
-
-      logger.info({ chatId: primaryUserId }, "Approval service started");
-
-      // Initialize veto watcher for blocked operation notifications
-      vetoWatcher = new VetoWatcher(bot, primaryUserId);
-      await vetoWatcher.start();
-      logger.info({ chatId: primaryUserId }, "Veto watcher started");
-    } else {
-      logger.warn("No allowed users configured, approval service not started");
-    }
-
-    // Start Feishu adapter if enabled
-    if (config.feishu?.enabled) {
-      logger.info("Starting Feishu adapter...");
-      feishuAdapter = new FeishuAdapter(config.feishu);
-
-      // Register Feishu message handlers
-      setupFeishuHandlers(feishuAdapter, sessionManagerAdapter, feishuBridgeAdapter);
-
-      await feishuAdapter.start();
-      logger.info({ port: config.feishu.webhookPort }, "Feishu adapter started");
-    }
-
-    const platformStatus = [
-      "Telegram: active",
-      config.feishu?.enabled ? `Feishu: active (port ${config.feishu.webhookPort})` : "Feishu: disabled",
-    ];
-    logger.info({ platforms: platformStatus }, "Bot is running. Press Ctrl+C to stop.");
-  } catch (error) {
-    logger.error({ error: (error as Error).message, stack: (error as Error).stack }, "Failed to start bot");
-    process.exit(1);
-  }
-}
-
-/**
- * Set up Feishu message handlers to mirror Telegram functionality
+ * Set up Feishu message handlers
  */
 function setupFeishuHandlers(
   adapter: FeishuAdapter,
@@ -321,13 +159,13 @@ function setupFeishuHandlers(
 ): void {
   // Handle regular messages
   adapter.onMessage(async (event) => {
-    const userId = event.message.from.id; // Use string ID directly (Feishu IDs are strings like ou_xxxxx)
+    const userId = event.message.from.id;
     const text = event.message.text || "";
     const chatId = event.message.chat.id;
 
     if (!text.trim()) return;
 
-    logger.info({ userId, messageLength: text.length, platform: "feishu" }, "Processing Feishu message");
+    logger.info({ userId, messageLength: text.length, platform: PLATFORM }, "Processing Feishu message");
 
     try {
       // Get or create session
@@ -365,7 +203,6 @@ function setupFeishuHandlers(
             "Failed to edit message, sending as new message"
           );
           await adapter.sendMessage(chatId, fullResponse);
-          // Clean up the placeholder "..." message
           try {
             await adapter.deleteMessage(chatId, initialMsg.id);
           } catch (deleteError) {
@@ -378,7 +215,7 @@ function setupFeishuHandlers(
       }
     } catch (error) {
       const err = error as Error;
-      logger.error({ error: err.message, platform: "feishu" }, "Failed to process Feishu message");
+      logger.error({ error: err.message, platform: PLATFORM }, "Failed to process Feishu message");
       await adapter.sendMessage(chatId, `Error: ${err.message}`);
     }
   });
@@ -411,7 +248,7 @@ function setupFeishuHandlers(
   });
 
   adapter.onCommand("status", async (event) => {
-    const bridge = getTmuxBridge("feishu");
+    const bridge = getTmuxBridge(PLATFORM);
     const attachedTarget = bridge.getAttachedTarget();
     const hasPending = bridge.hasPendingRequest();
 
@@ -437,7 +274,7 @@ function setupFeishuHandlers(
       return;
     }
 
-    const bridge = getTmuxBridge("feishu");
+    const bridge = getTmuxBridge(PLATFORM);
     try {
       await bridge.attach(target);
       await adapter.sendMessage(
@@ -451,7 +288,7 @@ function setupFeishuHandlers(
   });
 
   adapter.onCommand("detach", async (event) => {
-    const bridge = getTmuxBridge("feishu");
+    const bridge = getTmuxBridge(PLATFORM);
     const currentTarget = bridge.getAttachedTarget();
 
     if (!currentTarget) {
@@ -464,6 +301,68 @@ function setupFeishuHandlers(
   });
 
   logger.info("Feishu handlers registered");
+}
+
+/**
+ * Main entry point for Feishu bot
+ */
+async function main(): Promise<void> {
+  logger.info("Starting Claude Bot (Feishu)...");
+
+  try {
+    // Load and validate config
+    const config = getConfig();
+
+    if (!config.feishu?.enabled) {
+      logger.error("Feishu is not enabled in config. Set FEISHU_ENABLED=true in .env");
+      process.exit(1);
+    }
+
+    // Clean up stale pending files from crashed sessions (older than 10 minutes)
+    const stalePendingRemoved = cleanupStalePendingFiles(PLATFORM, 10 * 60 * 1000);
+    if (stalePendingRemoved > 0) {
+      logger.info({ count: stalePendingRemoved }, "Cleaned up stale pending files on startup");
+    }
+
+    logger.info(
+      {
+        platform: PLATFORM,
+        webhookPort: config.feishu.webhookPort,
+        allowedUsers: config.feishu.allowedUsers,
+        defaultWorkspace: config.claude.defaultWorkspace,
+      },
+      "Configuration loaded"
+    );
+
+    // Ensure data directory exists
+    const sessionsPath = "./data/feishu-sessions.json";
+    const dir = dirname(sessionsPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    // Initialize session manager with Feishu-specific path
+    const sessionManager = createSessionManager(sessionsPath);
+    await sessionManager.initialize();
+    logger.info({ sessionCount: sessionManager.count }, "Session manager initialized");
+
+    // Create adapters
+    const sessionManagerAdapter = createSessionManagerAdapter(sessionManager);
+    const claudeBridgeAdapter = createClaudeBridgeAdapter();
+
+    // Start Feishu adapter
+    feishuAdapter = new FeishuAdapter(config.feishu);
+
+    // Register Feishu message handlers
+    setupFeishuHandlers(feishuAdapter, sessionManagerAdapter, claudeBridgeAdapter);
+
+    await feishuAdapter.start();
+
+    logger.info({ port: config.feishu.webhookPort }, "Feishu bot is running. Press Ctrl+C to stop.");
+  } catch (error) {
+    logger.error({ error: (error as Error).message, stack: (error as Error).stack }, "Failed to start bot");
+    process.exit(1);
+  }
 }
 
 // Run

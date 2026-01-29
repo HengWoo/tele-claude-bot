@@ -5,7 +5,7 @@ import type { BotContext, NotificationLevel } from "../types.js";
 import { SessionManager } from "../sessions/manager.js";
 import { createChildLogger } from "../utils/logger.js";
 import { getConfig } from "../config.js";
-import { getTmuxBridge } from "../tmux/bridge.js";
+import { getTmuxBridge, type Platform } from "../tmux/bridge.js";
 import {
   listPanes,
   listSessions,
@@ -15,6 +15,9 @@ import {
 } from "../tmux/index.js";
 
 const logger = createChildLogger("command-handler");
+
+// Default platform for command handlers (Telegram)
+const PLATFORM: Platform = "telegram";
 
 /**
  * Expand ~ to home directory in paths and validate against directory traversal
@@ -483,7 +486,7 @@ export async function handleAttachCommand(
     return;
   }
 
-  const bridge = getTmuxBridge();
+  const bridge = getTmuxBridge(PLATFORM);
 
   try {
     await bridge.attach(target);
@@ -512,7 +515,7 @@ export async function handleDetachCommand(
 
   logger.debug({ userId }, "Detach command");
 
-  const bridge = getTmuxBridge();
+  const bridge = getTmuxBridge(PLATFORM);
   const currentTarget = bridge.getAttachedTarget();
 
   if (!currentTarget) {
@@ -596,7 +599,7 @@ export async function handlePanesCommand(
     return;
   }
 
-  const bridge = getTmuxBridge();
+  const bridge = getTmuxBridge(PLATFORM);
   const currentTarget = bridge.getAttachedTarget();
 
   // Create inline keyboard for quick attachment
@@ -637,7 +640,7 @@ export async function handleStatusCommand(
 
   logger.debug({ userId }, "Status command");
 
-  const bridge = getTmuxBridge();
+  const bridge = getTmuxBridge(PLATFORM);
   const attachedTarget = bridge.getAttachedTarget();
   const hasPending = bridge.hasPendingRequest();
 
@@ -682,7 +685,7 @@ export async function handleAttachCallback(
 
   logger.debug({ userId, target }, "Attach callback");
 
-  const bridge = getTmuxBridge();
+  const bridge = getTmuxBridge(PLATFORM);
 
   try {
     await bridge.attach(target);

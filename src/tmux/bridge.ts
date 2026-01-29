@@ -8,7 +8,18 @@ import { createChildLogger } from "../utils/logger.js";
 const logger = createChildLogger("tmux-bridge");
 
 const CLAUDE_DIR = `${homedir()}/.claude`;
-const STATE_FILE = `${CLAUDE_DIR}/tg-state.json`;
+
+/**
+ * Platform type for tmux bridge isolation
+ */
+export type Platform = "telegram" | "feishu";
+
+/**
+ * Get the state file path for a specific platform
+ */
+export function getStateFile(platform: Platform): string {
+  return `${CLAUDE_DIR}/${platform}-bridge.json`;
+}
 
 /**
  * Sanitize tmux target for use in filenames
@@ -19,25 +30,25 @@ export function sanitizeTarget(target: string): string {
 }
 
 /**
- * Get the pending file path for a specific target
+ * Get the pending file path for a specific platform and target
  */
-export function getPendingFilePath(target: string): string {
-  return `${CLAUDE_DIR}/tg-pending-${sanitizeTarget(target)}`;
+export function getPendingFilePath(platform: Platform, target: string): string {
+  return `${CLAUDE_DIR}/${platform}-pending-${sanitizeTarget(target)}`;
 }
 
 /**
- * Get the done file path for a specific target
+ * Get the done file path for a specific platform and target
  */
-export function getDoneFilePath(target: string): string {
-  return `${CLAUDE_DIR}/tg-done-${sanitizeTarget(target)}`;
+export function getDoneFilePath(platform: Platform, target: string): string {
+  return `${CLAUDE_DIR}/${platform}-done-${sanitizeTarget(target)}`;
 }
 
 /**
- * Get the response file path for a specific target
+ * Get the response file path for a specific platform and target
  * This file contains the raw markdown response extracted from transcript
  */
-export function getResponseFilePath(target: string): string {
-  return `${CLAUDE_DIR}/tg-response-${sanitizeTarget(target)}`;
+export function getResponseFilePath(platform: Platform, target: string): string {
+  return `${CLAUDE_DIR}/${platform}-response-${sanitizeTarget(target)}`;
 }
 
 export interface PendingRequest {
@@ -55,23 +66,35 @@ export interface TmuxBridgeState {
 }
 
 /**
- * TmuxBridge manages the connection between Telegram bot and tmux panes running Claude
+ * TmuxBridge manages the connection between messaging platforms and tmux panes running Claude
  *
  * Note: Claude Code has internal input buffering - messages sent via tmux send-keys
  * while Claude is busy will be queued in the prompt and processed when ready.
  * This means we don't need our own message queue system.
  */
 export class TmuxBridge {
+  private readonly platform: Platform;
+  private readonly stateFile: string;
   private state: TmuxBridgeState = {
     attachedTarget: null,
     pendingRequest: null,
   };
 
-  constructor() {
+  constructor(platform: Platform) {
+    this.platform = platform;
+    this.stateFile = getStateFile(platform);
     // Clean up any stale marker files on startup
     this.cleanupAllMarkerFiles();
     // Load persisted state on startup
     this.loadPersistedState();
+    logger.info({ platform }, "TmuxBridge initialized");
+  }
+
+  /**
+   * Get the platform this bridge is for
+   */
+  getPlatform(): Platform {
+    return this.platform;
   }
 
   /**
@@ -79,16 +102,16 @@ export class TmuxBridge {
    */
   private loadPersistedState(): void {
     try {
-      if (existsSync(STATE_FILE)) {
-        const data = readFileSync(STATE_FILE, "utf-8");
+      if (existsSync(this.stateFile)) {
+        const data = readFileSync(this.stateFile, "utf-8");
         const saved = JSON.parse(data);
         if (saved.attachedTarget) {
           this.state.attachedTarget = saved.attachedTarget;
-          logger.info({ target: saved.attachedTarget }, "Restored attached target from state file");
+          logger.info({ platform: this.platform, target: saved.attachedTarget }, "Restored attached target from state file");
         }
       }
     } catch (error) {
-      logger.warn({ error: (error as Error).message }, "Failed to load persisted state");
+      logger.warn({ platform: this.platform, error: (error as Error).message }, "Failed to load persisted state");
     }
   }
 
@@ -97,9 +120,9 @@ export class TmuxBridge {
    */
   private saveState(): void {
     try {
-      writeFileSync(STATE_FILE, JSON.stringify({ attachedTarget: this.state.attachedTarget }));
+      writeFileSync(this.stateFile, JSON.stringify({ attachedTarget: this.state.attachedTarget }));
     } catch (error) {
-      logger.warn({ error: (error as Error).message }, "Failed to save state");
+      logger.warn({ platform: this.platform, error: (error as Error).message }, "Failed to save state");
     }
   }
 
@@ -202,7 +225,7 @@ export class TmuxBridge {
     };
 
     this.state.pendingRequest = pending;
-    writeFileSync(getPendingFilePath(target), JSON.stringify(pending));
+    writeFileSync(getPendingFilePath(this.platform, target), JSON.stringify(pending));
 
     logger.info({ target, chatId, messageId }, "Sending message to Claude via tmux");
 
@@ -239,8 +262,8 @@ export class TmuxBridge {
     let lastOutput = "";
     const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
-    const doneFile = getDoneFilePath(target);
-    const responseFile = getResponseFilePath(target);
+    const doneFile = getDoneFilePath(this.platform, target);
+    const responseFile = getResponseFilePath(this.platform, target);
     logger.debug({ target, timeout, requestId: pendingRequest.requestId, doneFile, responseFile }, "Waiting for Claude completion");
 
     while (Date.now() - startTime < timeout) {
@@ -503,9 +526,9 @@ export class TmuxBridge {
    * Clean up marker files for a specific target
    */
   private cleanupMarkerFiles(target: string): void {
-    const pendingFile = getPendingFilePath(target);
-    const doneFile = getDoneFilePath(target);
-    const responseFile = getResponseFilePath(target);
+    const pendingFile = getPendingFilePath(this.platform, target);
+    const doneFile = getDoneFilePath(this.platform, target);
+    const responseFile = getResponseFilePath(this.platform, target);
     try {
       if (existsSync(pendingFile)) {
         unlinkSync(pendingFile);
@@ -517,28 +540,32 @@ export class TmuxBridge {
         unlinkSync(responseFile);
       }
     } catch (error) {
-      logger.warn({ error: (error as Error).message, target }, "Failed to cleanup marker files");
+      logger.warn({ platform: this.platform, error: (error as Error).message, target }, "Failed to cleanup marker files");
     }
   }
 
   /**
-   * Clean up ALL marker files (used on startup)
+   * Clean up ALL marker files for this platform (used on startup)
    */
   private cleanupAllMarkerFiles(): void {
     try {
       if (!existsSync(CLAUDE_DIR)) return;
 
+      const pendingPrefix = `${this.platform}-pending-`;
+      const donePrefix = `${this.platform}-done-`;
+      const responsePrefix = `${this.platform}-response-`;
+
       const files = readdirSync(CLAUDE_DIR);
       for (const file of files) {
-        if (file.startsWith("tg-pending-") || file.startsWith("tg-done-") || file.startsWith("tg-response-")) {
+        if (file.startsWith(pendingPrefix) || file.startsWith(donePrefix) || file.startsWith(responsePrefix)) {
           try {
             unlinkSync(`${CLAUDE_DIR}/${file}`);
-            logger.debug({ file }, "Cleaned up stale marker file");
+            logger.debug({ platform: this.platform, file }, "Cleaned up stale marker file");
           } catch (e) { logger.debug({ error: (e as Error).message, file }, "Failed to delete marker file"); }
         }
       }
     } catch (error) {
-      logger.warn({ error: (error as Error).message }, "Failed to cleanup all marker files");
+      logger.warn({ platform: this.platform, error: (error as Error).message }, "Failed to cleanup all marker files");
     }
   }
 
@@ -576,24 +603,24 @@ export class TmuxBridge {
   }
 }
 
-// Singleton instance
-let bridgeInstance: TmuxBridge | null = null;
+// Platform-specific bridge instances
+const bridgeInstances = new Map<Platform, TmuxBridge>();
 
 /**
- * Get or create the TmuxBridge singleton
+ * Get or create a TmuxBridge for the specified platform
  */
-export function getTmuxBridge(): TmuxBridge {
-  if (!bridgeInstance) {
-    bridgeInstance = new TmuxBridge();
+export function getTmuxBridge(platform: Platform): TmuxBridge {
+  if (!bridgeInstances.has(platform)) {
+    bridgeInstances.set(platform, new TmuxBridge(platform));
   }
-  return bridgeInstance;
+  return bridgeInstances.get(platform)!;
 }
 
 /**
  * Create a Claude bridge adapter compatible with the existing message handler interface
  */
-export function createTmuxBridgeAdapter() {
-  const bridge = getTmuxBridge();
+export function createTmuxBridgeAdapter(platform: Platform) {
+  const bridge = getTmuxBridge(platform);
 
   return {
     async *sendMessage(

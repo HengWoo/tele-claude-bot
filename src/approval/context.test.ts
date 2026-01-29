@@ -36,46 +36,74 @@ describe("context detection", () => {
     vi.restoreAllMocks();
   });
 
-  describe("hasPendingTelegramRequest", () => {
+  describe("hasPendingRequest", () => {
     it("returns false when ~/.claude does not exist", async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
 
       // Import fresh to get clean module state
-      const { hasPendingTelegramRequest } = await import("./context.js");
-      const result = hasPendingTelegramRequest();
+      const { hasPendingRequest } = await import("./context.js");
+      const result = hasPendingRequest("telegram");
 
       expect(result).toBe(false);
       expect(fs.existsSync).toHaveBeenCalledWith(CLAUDE_DIR);
     });
 
-    it("returns false when no tg-pending-* files exist", async () => {
+    it("returns false when no telegram-pending-* files exist", async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       // readdirSync returns string[] when called without withFileTypes option
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fs.readdirSync as any).mockReturnValue([
         "settings.json",
         "approvals",
-        "tg-done-test",
+        "telegram-done-test",
       ]);
 
-      const { hasPendingTelegramRequest } = await import("./context.js");
-      const result = hasPendingTelegramRequest();
+      const { hasPendingRequest } = await import("./context.js");
+      const result = hasPendingRequest("telegram");
 
       expect(result).toBe(false);
     });
 
-    it("returns true when tg-pending-* file exists", async () => {
+    it("returns true when telegram-pending-* file exists", async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fs.readdirSync as any).mockReturnValue([
         "settings.json",
-        "tg-pending-session-0-0",
+        "telegram-pending-session-0-0",
       ]);
 
-      const { hasPendingTelegramRequest } = await import("./context.js");
-      const result = hasPendingTelegramRequest();
+      const { hasPendingRequest } = await import("./context.js");
+      const result = hasPendingRequest("telegram");
 
       expect(result).toBe(true);
+    });
+
+    it("returns true when feishu-pending-* file exists for feishu platform", async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (fs.readdirSync as any).mockReturnValue([
+        "settings.json",
+        "feishu-pending-session-0-0",
+      ]);
+
+      const { hasPendingRequest } = await import("./context.js");
+      const result = hasPendingRequest("feishu");
+
+      expect(result).toBe(true);
+    });
+
+    it("returns false when checking wrong platform", async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (fs.readdirSync as any).mockReturnValue([
+        "telegram-pending-session-0-0",
+      ]);
+
+      const { hasPendingRequest } = await import("./context.js");
+      // Telegram pending exists, but we're checking Feishu
+      const result = hasPendingRequest("feishu");
+
+      expect(result).toBe(false);
     });
 
     it("returns false on read error", async () => {
@@ -84,38 +112,55 @@ describe("context detection", () => {
         throw new Error("Permission denied");
       });
 
-      const { hasPendingTelegramRequest } = await import("./context.js");
-      const result = hasPendingTelegramRequest();
+      const { hasPendingRequest } = await import("./context.js");
+      const result = hasPendingRequest("telegram");
 
       expect(result).toBe(false);
     });
   });
 
-  describe("getPendingTelegramFiles", () => {
+  describe("getPendingFiles", () => {
     it("returns empty array when ~/.claude does not exist", async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
 
-      const { getPendingTelegramFiles } = await import("./context.js");
-      const result = getPendingTelegramFiles();
+      const { getPendingFiles } = await import("./context.js");
+      const result = getPendingFiles("telegram");
 
       expect(result).toEqual([]);
     });
 
-    it("returns full paths of tg-pending-* files", async () => {
+    it("returns full paths of telegram-pending-* files", async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fs.readdirSync as any).mockReturnValue([
         "settings.json",
-        "tg-pending-session-0-0",
-        "tg-pending-session-1-0",
+        "telegram-pending-session-0-0",
+        "telegram-pending-session-1-0",
+        "feishu-pending-session-2-0",
       ]);
 
-      const { getPendingTelegramFiles } = await import("./context.js");
-      const result = getPendingTelegramFiles();
+      const { getPendingFiles } = await import("./context.js");
+      const result = getPendingFiles("telegram");
 
       expect(result).toEqual([
-        join(CLAUDE_DIR, "tg-pending-session-0-0"),
-        join(CLAUDE_DIR, "tg-pending-session-1-0"),
+        join(CLAUDE_DIR, "telegram-pending-session-0-0"),
+        join(CLAUDE_DIR, "telegram-pending-session-1-0"),
+      ]);
+    });
+
+    it("returns only feishu files for feishu platform", async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (fs.readdirSync as any).mockReturnValue([
+        "telegram-pending-session-0-0",
+        "feishu-pending-session-1-0",
+      ]);
+
+      const { getPendingFiles } = await import("./context.js");
+      const result = getPendingFiles("feishu");
+
+      expect(result).toEqual([
+        join(CLAUDE_DIR, "feishu-pending-session-1-0"),
       ]);
     });
   });
@@ -125,12 +170,12 @@ describe("context detection", () => {
       vi.mocked(fs.existsSync).mockReturnValue(false);
 
       const { cleanupStalePendingFiles } = await import("./context.js");
-      const result = cleanupStalePendingFiles();
+      const result = cleanupStalePendingFiles("telegram");
 
       expect(result).toBe(0);
     });
 
-    it("removes files older than maxAgeMs", async () => {
+    it("removes files older than maxAgeMs for specified platform", async () => {
       const now = Date.now();
       const oldTime = now - 15 * 60 * 1000; // 15 minutes ago
       const recentTime = now - 5 * 60 * 1000; // 5 minutes ago
@@ -138,8 +183,9 @@ describe("context detection", () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fs.readdirSync as any).mockReturnValue([
-        "tg-pending-old",
-        "tg-pending-recent",
+        "telegram-pending-old",
+        "telegram-pending-recent",
+        "feishu-pending-old", // Should be ignored when cleaning telegram
       ]);
 
       vi.mocked(fs.statSync).mockImplementation((path) => {
@@ -152,12 +198,12 @@ describe("context detection", () => {
       vi.mocked(fs.unlinkSync).mockImplementation(() => undefined);
 
       const { cleanupStalePendingFiles } = await import("./context.js");
-      const result = cleanupStalePendingFiles(10 * 60 * 1000); // 10 minute threshold
+      const result = cleanupStalePendingFiles("telegram", 10 * 60 * 1000); // 10 minute threshold
 
       expect(result).toBe(1);
       expect(fs.unlinkSync).toHaveBeenCalledTimes(1);
       expect(fs.unlinkSync).toHaveBeenCalledWith(
-        join(CLAUDE_DIR, "tg-pending-old")
+        join(CLAUDE_DIR, "telegram-pending-old")
       );
     });
 
@@ -168,7 +214,7 @@ describe("context detection", () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fs.readdirSync as any).mockReturnValue([
-        "tg-pending-recent",
+        "telegram-pending-recent",
       ]);
 
       vi.mocked(fs.statSync).mockReturnValue({
@@ -176,7 +222,7 @@ describe("context detection", () => {
       } as fs.Stats);
 
       const { cleanupStalePendingFiles } = await import("./context.js");
-      const result = cleanupStalePendingFiles(10 * 60 * 1000);
+      const result = cleanupStalePendingFiles("telegram", 10 * 60 * 1000);
 
       expect(result).toBe(0);
       expect(fs.unlinkSync).not.toHaveBeenCalled();
@@ -189,8 +235,8 @@ describe("context detection", () => {
       vi.mocked(fs.existsSync).mockReturnValue(true);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fs.readdirSync as any).mockReturnValue([
-        "tg-pending-error",
-        "tg-pending-ok",
+        "telegram-pending-error",
+        "telegram-pending-ok",
       ]);
 
       vi.mocked(fs.statSync).mockImplementation((path) => {
@@ -203,10 +249,36 @@ describe("context detection", () => {
       vi.mocked(fs.unlinkSync).mockImplementation(() => undefined);
 
       const { cleanupStalePendingFiles } = await import("./context.js");
-      const result = cleanupStalePendingFiles(10 * 60 * 1000);
+      const result = cleanupStalePendingFiles("telegram", 10 * 60 * 1000);
 
       // Should still process the second file
       expect(result).toBe(1);
+    });
+
+    it("only cleans up files for the specified platform", async () => {
+      const now = Date.now();
+      const oldTime = now - 15 * 60 * 1000;
+
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (fs.readdirSync as any).mockReturnValue([
+        "telegram-pending-old",
+        "feishu-pending-old",
+      ]);
+
+      vi.mocked(fs.statSync).mockReturnValue({ mtimeMs: oldTime } as fs.Stats);
+      vi.mocked(fs.unlinkSync).mockImplementation(() => undefined);
+
+      const { cleanupStalePendingFiles } = await import("./context.js");
+
+      // Clean only feishu
+      const result = cleanupStalePendingFiles("feishu", 10 * 60 * 1000);
+
+      expect(result).toBe(1);
+      expect(fs.unlinkSync).toHaveBeenCalledTimes(1);
+      expect(fs.unlinkSync).toHaveBeenCalledWith(
+        join(CLAUDE_DIR, "feishu-pending-old")
+      );
     });
   });
 });

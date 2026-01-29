@@ -1,10 +1,10 @@
 #!/bin/bash
-# Claude Code Stop Hook for Telegram Bot
+# Claude Code Stop Hook for Bot Platforms (Telegram, Feishu)
 # This script signals that Claude has finished processing a request.
 #
 # SETUP:
 # 1. Copy this file to ~/.claude/hooks/stop.sh
-#    cp scripts/tg-done-hook.sh ~/.claude/hooks/stop.sh
+#    cp scripts/claude-bot-hook.sh ~/.claude/hooks/stop.sh
 #    chmod +x ~/.claude/hooks/stop.sh
 #
 # 2. Add to ~/.claude/settings.json:
@@ -26,7 +26,10 @@
 #
 # 3. Restart Claude Code to load the hook
 
-LOG_FILE="$HOME/.claude/tg-hook-debug.log"
+LOG_FILE="$HOME/.claude/bot-hook-debug.log"
+
+# All supported platforms
+PLATFORMS="telegram feishu"
 
 # Always log that hook was called
 echo "=== Stop hook triggered at $(date) ===" >> "$LOG_FILE"
@@ -51,17 +54,16 @@ fi
 # Sanitize target for filename (replace : and . with -)
 SAFE_TARGET=$(echo "$TARGET" | tr ':.' '-')
 
-PENDING_FILE="$HOME/.claude/tg-pending-$SAFE_TARGET"
-DONE_FILE="$HOME/.claude/tg-done-$SAFE_TARGET"
+# Check all platforms for pending requests
+for PLATFORM in $PLATFORMS; do
+    PENDING_FILE="$HOME/.claude/${PLATFORM}-pending-$SAFE_TARGET"
+    DONE_FILE="$HOME/.claude/${PLATFORM}-done-$SAFE_TARGET"
 
-echo "PENDING_FILE: $PENDING_FILE" >> "$LOG_FILE"
-echo "PENDING_FILE exists: $([ -f "$PENDING_FILE" ] && echo 'yes' || echo 'no')" >> "$LOG_FILE"
-
-# Only signal if bot is waiting for a response for this target
-if [ -f "$PENDING_FILE" ]; then
-    cp "$PENDING_FILE" "$DONE_FILE"
-    echo "Created DONE_FILE: $DONE_FILE" >> "$LOG_FILE"
-fi
+    if [ -f "$PENDING_FILE" ]; then
+        cp "$PENDING_FILE" "$DONE_FILE"
+        echo "Signaled completion for $PLATFORM: $DONE_FILE" >> "$LOG_FILE"
+    fi
+done
 
 echo "---" >> "$LOG_FILE"
 
