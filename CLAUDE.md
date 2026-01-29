@@ -1,3 +1,19 @@
+# Olive - Personal AI Assistant
+
+## Identity
+
+@.claude/soul.md
+
+## Knowledge
+
+Reference `.claude/knowledge/` for project-specific lessons:
+
+| Topic | File | When to load |
+|-------|------|--------------|
+| Lessons learned | `lessons-learned.md` | tmux automation, debugging intermittent failures |
+
+---
+
 # Telegram-Claude Bridge
 
 A Telegram bot that bridges to Claude Code sessions via tmux.
