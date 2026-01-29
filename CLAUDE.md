@@ -84,3 +84,7 @@ Optional:
 ## Testing
 
 Tests use Vitest and are colocated with source files (`*.test.ts`).
+
+## Lessons Learned
+
+See [docs/lessons-learned.md](docs/lessons-learned.md) for hard-won lessons from building this project. Read before making significant changes.
