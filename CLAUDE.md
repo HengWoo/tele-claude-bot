@@ -1,86 +1,125 @@
-# Telegram-Claude Bridge
+# Claude Bot Bridge
 
-A Telegram bot that bridges to Claude Code sessions via tmux.
+A multi-platform bot that bridges Telegram and Feishu to Claude Code sessions via tmux.
 
 ## Quick Reference
 
 ```bash
-npm run dev          # Development with hot reload
-npm run build        # Compile TypeScript
-npm run start        # Run compiled JS
-npm run test         # Run tests in watch mode
-npm run test:run     # Run tests once
-npm run typecheck    # Type checking only
+# Platform-specific (recommended)
+npm run dev:telegram     # Telegram bot with hot reload
+npm run dev:feishu       # Feishu bot with hot reload
+npm run start:telegram   # Production Telegram
+npm run start:feishu     # Production Feishu
+
+# Legacy (runs both platforms)
+npm run dev              # Both platforms, hot reload
+npm run start            # Both platforms, production
+
+# Build & Test
+npm run build            # Compile TypeScript
+npm run test             # Tests in watch mode
+npm run test:run         # Tests once
+npm run typecheck        # Type checking only
 ```
 
 ## Project Structure
 
 ```
 src/
-├── index.ts           # Entry point, graceful shutdown
-├── bot.ts             # Grammy bot setup, middleware, commands
-├── config.ts          # Configuration loading (env + default.json)
-├── types.ts           # TypeScript interfaces
-├── claude/            # Claude interaction
-│   ├── bridge.ts      # Approval queue management
-│   ├── stream-parser.ts
-│   └── approval.ts
-├── tmux/              # tmux session management
-│   ├── bridge.ts      # Core tmux<->Claude bridge
-│   └── index.ts
-├── sessions/          # Session persistence
-│   ├── manager.ts
-│   └── storage.ts
-├── handlers/          # Telegram message/command handlers
-│   ├── commands.ts
-│   ├── message.ts
-│   ├── callbacks.ts
-│   └── files.ts
-└── utils/             # Helpers (logger, telegram, files)
+├── telegram-main.ts     # Telegram entry point
+├── feishu-main.ts       # Feishu entry point
+├── index.ts             # Legacy multi-platform entry (deprecated)
+├── config.ts            # Configuration loading
+├── types.ts             # TypeScript interfaces
+├── platforms/           # Platform abstraction layer
+│   ├── interface.ts     # PlatformAdapter interface
+│   ├── types.ts         # Cross-platform message types
+│   ├── telegram/        # Telegram adapter (Grammy)
+│   └── feishu/          # Feishu adapter (Lark SDK)
+├── tmux/                # tmux session management
+│   └── bridge.ts        # Platform-isolated tmux bridges
+├── claude/              # Claude interaction
+│   ├── bridge.ts        # Approval queue management
+│   └── stream-parser.ts
+├── approval/            # Approval system for dangerous ops
+├── sessions/            # Session persistence
+├── handlers/            # Telegram-specific handlers
+└── utils/               # Helpers (logger, formatters)
+
+scripts/
+└── claude-bot-hook.sh   # Stop hook for response delivery
 ```
 
 ## Architecture
 
-- **Grammy** for Telegram bot framework
-- **tmux bridge** injects messages into running Claude Code sessions
+- **Platform adapters** abstract messaging (Telegram via Grammy, Feishu via Lark SDK)
+- **tmux bridge** injects messages into Claude Code sessions with platform isolation
+- **Stop hook** extracts responses from Claude transcript and signals completion
 - **Pino** for structured logging
-- User authorization via `ALLOWED_USER_ID` in .env
+- Each platform runs independently with its own state files
+
+## Platform Isolation
+
+Telegram and Feishu run as separate processes with isolated state:
+- State files: `~/.claude/telegram-bridge.json`, `~/.claude/feishu-bridge.json`
+- Marker files: `{platform}-pending-*`, `{platform}-done-*`, `{platform}-response-*`
+- Each can attach to different Claude sessions simultaneously
 
 ## Deployment Model
 
-**Intentionally local-only.** This is a personal AI assistant designed to run on your own machine.
+**Intentionally local-only.** Personal AI assistant designed to run on your own machine.
 
-Why local > VPS for this use case:
-- No exposed ports/SSH - only Telegram as remote interface
+Why local > VPS:
+- No exposed ports/SSH - only messaging platforms as remote interface
 - Physical control over tmux sessions and Claude instances
-- `ALLOWED_USER_ID` + approval system = only you can interact
-- No cloud provider trust required
+- Authorization + approval system = only you can interact
 
 Worktree layout:
 - `tele_bot/` (main) - stable running instance
 - `tele_bot-dev/` (develop) - sandbox for experiments
 
-**When to reconsider:** If you need always-on availability, multi-user access, or mobile-only usage without your laptop running.
+**Feishu requires Cloudflare Tunnel** (or similar) to receive webhooks:
+```bash
+sudo cloudflared service install <token>  # Persistent tunnel
+```
+
+## Environment
+
+**Telegram** (in `.env`):
+```
+TELEGRAM_TOKEN=xxx       # Required - from @BotFather
+ALLOWED_USER_ID=123      # Required - comma-separated user IDs
+```
+
+**Feishu** (in `.env`):
+```
+FEISHU_ENABLED=true      # Enable Feishu bot
+FEISHU_APP_ID=xxx        # Required when enabled
+FEISHU_APP_SECRET=xxx    # Required when enabled
+FEISHU_WEBHOOK_PORT=8847 # Webhook server port
+FEISHU_ALLOWED_USERS=ou_xxx  # Comma-separated (optional, allows all if empty)
+FEISHU_DOMAIN=feishu     # or "lark" for international
+```
+
+**Optional**:
+```
+LOG_LEVEL=info           # debug/info/warn/error
+DEFAULT_WORKSPACE=~/projects
+```
 
 ## Key Patterns
 
 - Async generators for streaming responses (`AsyncGenerator<string>`)
-- Middleware pattern for auth and logging
+- Platform adapter interface for unified messaging API
 - Session manager with file-based persistence
-- Commands registered before message handlers (order matters in Grammy)
-
-## Environment
-
-Required in `.env`:
-- `TELEGRAM_TOKEN` - Bot token from @BotFather
-- `ALLOWED_USER_ID` - Comma-separated user IDs
-
-Optional:
-- `LOG_LEVEL` - debug/info/warn/error
-- `DEFAULT_WORKSPACE` - Default working directory
-- `CLAUDE_MODEL` - Claude model override
-- `CLAUDE_TIMEOUT` - Response timeout (ms)
+- Stop hook reads transcript and writes response to marker file
 
 ## Testing
 
 Tests use Vitest and are colocated with source files (`*.test.ts`).
+
+**Important:** Unit tests don't cover the hook script or integration flows. Always manually test end-to-end after infrastructure changes.
+
+## Lessons Learned
+
+See [docs/lessons-learned.md](docs/lessons-learned.md) for hard-won lessons from building this project. Read before making significant changes.
