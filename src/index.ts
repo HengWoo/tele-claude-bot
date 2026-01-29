@@ -336,6 +336,12 @@ function setupFeishuHandlers(
             "Failed to edit message, sending as new message"
           );
           await adapter.sendMessage(chatId, fullResponse);
+          // Clean up the placeholder "..." message
+          try {
+            await adapter.deleteMessage(chatId, initialMsg.id);
+          } catch {
+            // Best-effort cleanup, ignore failures
+          }
         }
       }
     } catch (error) {

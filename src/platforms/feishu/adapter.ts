@@ -248,8 +248,11 @@ export class FeishuAdapter implements PlatformAdapter {
       // Notify user that file couldn't be processed
       try {
         await this.sendMessage(message.chat_id, "Sorry, I couldn't process your file. Please try a different format.");
-      } catch {
-        // Ignore send failure
+      } catch (sendError) {
+        logger.warn(
+          { chatId: message.chat_id, error: (sendError as Error).message },
+          "Failed to send file error notification to user"
+        );
       }
       return;
     }
