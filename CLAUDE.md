@@ -47,7 +47,11 @@ src/
 └── utils/               # Helpers (logger, formatters)
 
 scripts/
-└── claude-bot-hook.sh   # Stop hook for response delivery
+├── claude-bot-hook.sh   # Stop hook for response delivery
+└── feishu/              # Feishu API CLI tool
+    ├── index.js         # CLI entry point
+    ├── commands/        # doc, bitable, sheet, drive, wiki
+    └── lib/             # Shared client and utilities
 ```
 
 ## Architecture
@@ -117,6 +121,16 @@ DEFAULT_WORKSPACE=~/projects
 Tests use Vitest and are colocated with source files (`*.test.ts`).
 
 **Important:** Unit tests don't cover the hook script or integration flows. Always manually test end-to-end after infrastructure changes.
+
+## Feishu CLI
+
+Access Feishu documents, sheets, and Bitable via CLI:
+```bash
+node scripts/feishu doc raw <document_id>           # Read document text
+node scripts/feishu bitable records <app> <table>   # Query bitable records
+node scripts/feishu sheet read <token> "Sheet1!A1:C10"  # Read spreadsheet
+node scripts/feishu --help                          # See all commands
+```
 
 ## Lessons Learned
 
