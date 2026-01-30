@@ -117,7 +117,7 @@ wiki
   .action(async (nodeToken, options) => {
     try {
       const token = smartParse(nodeToken, 'wiki');
-      const res = await client.wiki.v2.spaceNode.get({
+      const res = await client.wiki.v2.space.getNode({
         params: { token },
       });
 
