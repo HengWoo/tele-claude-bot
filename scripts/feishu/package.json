@@ -1,0 +1,17 @@
+{
+  "name": "feishu-cli",
+  "version": "1.0.0",
+  "description": "Feishu API CLI - Documents, Sheets, Bitable",
+  "main": "index.js",
+  "bin": {
+    "feishu": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.45.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5"
+  }
+}
