@@ -738,7 +738,7 @@ export function createTmuxBridgeAdapter(platform: Platform) {
       }
     },
 
-    isSessionActive(userId: string): boolean {
+    isSessionActive(_session: unknown, userId: string): boolean {
       return bridge.isAttached(userId);
     },
 
