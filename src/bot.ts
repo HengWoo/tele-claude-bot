@@ -136,7 +136,7 @@ bot.command("status", async (ctx) => {
     return;
   }
 
-  const isActive = claudeBridge?.isSessionActive(session) ?? false;
+  const isActive = claudeBridge?.isSessionActive(session, String(userId!)) ?? false;
   const lastUsed = new Date(session.lastUsed).toLocaleString();
 
   await ctx.reply(

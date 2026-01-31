@@ -69,10 +69,19 @@ export interface PendingRequest {
   prompt: string;
 }
 
+/**
+ * Per-user target mapping
+ */
+export interface UserTarget {
+  target: string;   // Positional address: "1:6.1"
+  paneId: string;   // Stable pane ID: "%7"
+}
+
 export interface TmuxBridgeState {
-  attachedTarget: string | null;  // Positional address for display (e.g., "1:2.1")
-  attachedPaneId: string | null;  // Stable pane ID for file naming (e.g., "%4")
-  pendingRequest: PendingRequest | null;
+  // Per-user target mapping (userId → target info)
+  userTargets: Map<string, UserTarget>;
+  // Per-user pending requests (userId → pending request)
+  pendingRequests: Map<string, PendingRequest>;
 }
 
 /**
@@ -86,9 +95,8 @@ export class TmuxBridge {
   private readonly platform: Platform;
   private readonly stateFile: string;
   private state: TmuxBridgeState = {
-    attachedTarget: null,
-    attachedPaneId: null,
-    pendingRequest: null,
+    userTargets: new Map(),
+    pendingRequests: new Map(),
   };
 
   constructor(platform: Platform) {
@@ -110,16 +118,34 @@ export class TmuxBridge {
 
   /**
    * Load persisted state from file
+   * Handles migration from old format (single global target) to new format (per-user targets)
    */
   private loadPersistedState(): void {
     try {
       if (existsSync(this.stateFile)) {
         const data = readFileSync(this.stateFile, "utf-8");
         const saved = JSON.parse(data);
-        if (saved.attachedTarget && saved.attachedPaneId) {
-          this.state.attachedTarget = saved.attachedTarget;
-          this.state.attachedPaneId = saved.attachedPaneId;
-          logger.info({ platform: this.platform, target: saved.attachedTarget, paneId: saved.attachedPaneId }, "Restored attached target from state file");
+
+        // New format: userTargets object
+        if (saved.userTargets && typeof saved.userTargets === "object") {
+          for (const [userId, targetInfo] of Object.entries(saved.userTargets)) {
+            const info = targetInfo as { target: string; paneId: string };
+            if (info.target && info.paneId) {
+              this.state.userTargets.set(userId, { target: info.target, paneId: info.paneId });
+            }
+          }
+          logger.info({
+            platform: this.platform,
+            userCount: this.state.userTargets.size,
+            users: Array.from(this.state.userTargets.keys())
+          }, "Restored per-user targets from state file");
+        }
+        // Old format migration: single global target (ignore, don't migrate)
+        else if (saved.attachedTarget && saved.attachedPaneId) {
+          logger.warn({
+            platform: this.platform,
+            oldTarget: saved.attachedTarget
+          }, "Found old state format. Migration: old target discarded. Users must /attach again.");
         }
       }
     } catch (error) {
@@ -132,19 +158,24 @@ export class TmuxBridge {
    */
   private saveState(): void {
     try {
-      writeFileSync(this.stateFile, JSON.stringify({
-        attachedTarget: this.state.attachedTarget,
-        attachedPaneId: this.state.attachedPaneId,
-      }));
+      // Convert Map to plain object for JSON serialization
+      const userTargetsObj: Record<string, UserTarget> = {};
+      for (const [userId, targetInfo] of this.state.userTargets) {
+        userTargetsObj[userId] = targetInfo;
+      }
+
+      writeFileSync(this.stateFile, JSON.stringify({ userTargets: userTargetsObj }));
     } catch (error) {
       logger.warn({ platform: this.platform, error: (error as Error).message }, "Failed to save state");
     }
   }
 
   /**
-   * Attach to a tmux pane
+   * Attach to a tmux pane for a specific user
+   * @param target - tmux pane target (e.g., "1:2.1")
+   * @param userId - User identifier for per-user targeting
    */
-  async attach(target: string): Promise<void> {
+  async attach(target: string, userId: string): Promise<void> {
     // Verify pane exists and get info
     const paneInfo = await getPaneInfo(target);
     if (!paneInfo) {
@@ -159,55 +190,60 @@ export class TmuxBridge {
       );
     }
 
-    // Store both positional address (for display) and stable pane ID (for file naming)
-    this.state.attachedTarget = target;
-    this.state.attachedPaneId = paneInfo.paneId;
+    // Store per-user target mapping
+    this.state.userTargets.set(userId, { target, paneId: paneInfo.paneId });
     this.saveState();
-    logger.info({ target, paneId: paneInfo.paneId }, "Attached to tmux pane");
+    logger.info({ userId, target, paneId: paneInfo.paneId }, "Attached user to tmux pane");
   }
 
   /**
-   * Detach from current pane
+   * Detach a specific user from their pane
+   * @param userId - User identifier
    */
-  detach(): void {
-    const previousTarget = this.state.attachedTarget;
-    const previousPaneId = this.state.attachedPaneId;
-    this.state.attachedTarget = null;
-    this.state.attachedPaneId = null;
-    this.state.pendingRequest = null;
-    this.saveState();
-    if (previousPaneId) {
-      this.cleanupMarkerFiles(previousPaneId);
+  detach(userId: string): void {
+    const userTarget = this.state.userTargets.get(userId);
+    if (!userTarget) {
+      logger.debug({ userId }, "User not attached to any pane");
+      return;
     }
-    logger.info({ previousTarget, previousPaneId }, "Detached from tmux pane");
+
+    this.state.userTargets.delete(userId);
+    this.state.pendingRequests.delete(userId);
+    this.saveState();
+    this.cleanupMarkerFiles(userTarget.paneId);
+    logger.info({ userId, previousTarget: userTarget.target, previousPaneId: userTarget.paneId }, "Detached user from tmux pane");
   }
 
   /**
-   * Check if attached to a pane
+   * Check if a specific user is attached to a pane
+   * @param userId - User identifier
    */
-  isAttached(): boolean {
-    return this.state.attachedTarget !== null;
+  isAttached(userId: string): boolean {
+    return this.state.userTargets.has(userId);
   }
 
   /**
-   * Get current attached target (positional address for display)
+   * Get current attached target for a specific user (positional address for display)
+   * @param userId - User identifier
    */
-  getAttachedTarget(): string | null {
-    return this.state.attachedTarget;
+  getAttachedTarget(userId: string): string | null {
+    return this.state.userTargets.get(userId)?.target ?? null;
   }
 
   /**
-   * Get current attached pane ID (stable ID for file naming)
+   * Get current attached pane ID for a specific user (stable ID for file naming)
+   * @param userId - User identifier
    */
-  getAttachedPaneId(): string | null {
-    return this.state.attachedPaneId;
+  getAttachedPaneId(userId: string): string | null {
+    return this.state.userTargets.get(userId)?.paneId ?? null;
   }
 
   /**
-   * Check if there's a pending request
+   * Check if there's a pending request for a specific user
+   * @param userId - User identifier
    */
-  hasPendingRequest(): boolean {
-    return this.state.pendingRequest !== null;
+  hasPendingRequest(userId: string): boolean {
+    return this.state.pendingRequests.has(userId);
   }
 
   /**
@@ -215,25 +251,32 @@ export class TmuxBridge {
    *
    * Claude Code handles input buffering internally - if Claude is busy,
    * the message will wait in the prompt and be processed when ready.
+   *
+   * @param message - Message to send
+   * @param userId - User identifier for per-user targeting
+   * @param chatId - Chat ID for callback
+   * @param messageId - Message ID for callback
+   * @param timeout - Timeout in milliseconds
    */
   async sendMessage(
     message: string,
+    userId: string,
     chatId: number,
     messageId: number,
     timeout = 300000 // 5 minutes default
   ): Promise<string> {
-    const target = this.state.attachedTarget;
-    const paneId = this.state.attachedPaneId;
+    const userTarget = this.state.userTargets.get(userId);
 
-    if (!target || !paneId) {
+    if (!userTarget) {
       throw new Error("Not attached to any tmux pane. Use /attach <target> first.");
     }
+
+    const { target, paneId } = userTarget;
 
     // Verify pane still exists
     const exists = await paneExists(target);
     if (!exists) {
-      this.state.attachedTarget = null;
-      this.state.attachedPaneId = null;
+      this.state.userTargets.delete(userId);
       this.saveState();
       throw new Error(`Pane ${target} no longer exists. Please /attach to a valid pane.`);
     }
@@ -251,11 +294,11 @@ export class TmuxBridge {
       prompt: message,
     };
 
-    this.state.pendingRequest = pending;
+    this.state.pendingRequests.set(userId, pending);
     // Use pane ID for file naming (stable across pane position changes)
     writeFileSync(getPendingFilePath(this.platform, paneId), JSON.stringify(pending));
 
-    logger.info({ target, paneId, chatId, messageId }, "Sending message to Claude via tmux");
+    logger.info({ userId, target, paneId, chatId, messageId }, "Sending message to Claude via tmux");
 
     try {
       // Capture pane state before sending (to know where our message starts)
@@ -271,7 +314,7 @@ export class TmuxBridge {
       return response;
     } finally {
       // Clean up (use pane ID for file naming)
-      this.state.pendingRequest = null;
+      this.state.pendingRequests.delete(userId);
       this.cleanupMarkerFiles(paneId);
     }
   }
@@ -611,28 +654,40 @@ export class TmuxBridge {
    * Get current state (for persistence)
    */
   getState(): TmuxBridgeState {
-    return { ...this.state };
+    return {
+      userTargets: new Map(this.state.userTargets),
+      pendingRequests: new Map(this.state.pendingRequests),
+    };
   }
 
   /**
-   * Restore state (from persistence)
+   * Restore state (from persistence) - validates panes still exist
+   * @param userTargets - Map or object of userId → UserTarget
    */
-  async restoreState(state: Partial<TmuxBridgeState>): Promise<void> {
-    if (state.attachedTarget && state.attachedPaneId) {
+  async restoreState(userTargets: Record<string, UserTarget>): Promise<void> {
+    for (const [userId, targetInfo] of Object.entries(userTargets)) {
       // Verify pane still exists before restoring
-      const paneInfo = await getPaneInfo(state.attachedTarget);
+      const paneInfo = await getPaneInfo(targetInfo.target);
       if (paneInfo) {
-        this.state.attachedTarget = state.attachedTarget;
-        // Use the current pane ID (in case pane was recreated at same position)
-        this.state.attachedPaneId = paneInfo.paneId;
-        logger.info({ target: state.attachedTarget, paneId: paneInfo.paneId }, "Restored attached target");
+        this.state.userTargets.set(userId, {
+          target: targetInfo.target,
+          paneId: paneInfo.paneId, // Use current pane ID in case recreated
+        });
+        logger.info({ userId, target: targetInfo.target, paneId: paneInfo.paneId }, "Restored user target");
       } else {
-        logger.warn({ target: state.attachedTarget }, "Previously attached pane no longer exists");
+        logger.warn({ userId, target: targetInfo.target }, "Previously attached pane no longer exists");
       }
     }
 
     // Clear any stale pending requests on startup
     this.cleanupAllMarkerFiles();
+  }
+
+  /**
+   * Get all attached user IDs (for debugging/status)
+   */
+  getAttachedUsers(): string[] {
+    return Array.from(this.state.userTargets.keys());
   }
 }
 
@@ -651,6 +706,7 @@ export function getTmuxBridge(platform: Platform): TmuxBridge {
 
 /**
  * Create a Claude bridge adapter compatible with the existing message handler interface
+ * Note: This adapter requires userId for per-user targeting
  */
 export function createTmuxBridgeAdapter(platform: Platform) {
   const bridge = getTmuxBridge(platform);
@@ -659,10 +715,11 @@ export function createTmuxBridgeAdapter(platform: Platform) {
     async *sendMessage(
       _session: unknown,
       message: string,
+      userId: string,
       chatId?: number,
       messageId?: number
     ): AsyncGenerator<string> {
-      if (!bridge.isAttached()) {
+      if (!bridge.isAttached(userId)) {
         yield "Not attached to any tmux pane. Use /attach <target> first.";
         return;
       }
@@ -670,6 +727,7 @@ export function createTmuxBridgeAdapter(platform: Platform) {
       try {
         const response = await bridge.sendMessage(
           message,
+          userId,
           chatId ?? 0,
           messageId ?? 0
         );
@@ -680,8 +738,8 @@ export function createTmuxBridgeAdapter(platform: Platform) {
       }
     },
 
-    isSessionActive(): boolean {
-      return bridge.isAttached();
+    isSessionActive(_session: unknown, userId: string): boolean {
+      return bridge.isAttached(userId);
     },
 
     // Additional methods for tmux-specific functionality
