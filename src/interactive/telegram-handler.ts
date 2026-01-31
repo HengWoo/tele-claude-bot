@@ -69,7 +69,7 @@ export class TelegramInteractiveHandler {
     userId: string,
     paneId: string,
     target: string,
-    chatId: number
+    chatId: string | number
   ): Promise<PromptResponse | null> {
     const promptKey = `${userId}:${paneId}`;
 
@@ -82,9 +82,12 @@ export class TelegramInteractiveHandler {
     // Build message text
     const messageText = this.formatPromptMessage(prompt);
 
+    // Convert chatId to number for Telegram API
+    const numericChatId = typeof chatId === "string" ? parseInt(chatId, 10) : chatId;
+
     try {
       // Send prompt message
-      const sentMessage = await this.bot.api.sendMessage(chatId, messageText, {
+      const sentMessage = await this.bot.api.sendMessage(numericChatId, messageText, {
         parse_mode: "HTML",
         reply_markup: keyboard,
       });
@@ -321,6 +324,10 @@ export class TelegramInteractiveHandler {
         pending.toggledIndices = new Set(terminalSelections);
       } else {
         // Fallback: update our tracking optimistically
+        logger.warn(
+          { target: pending.target, userId },
+          "Could not read terminal state, using optimistic tracking"
+        );
         if (pending.toggledIndices.has(optionIndex)) {
           pending.toggledIndices.delete(optionIndex);
         } else {

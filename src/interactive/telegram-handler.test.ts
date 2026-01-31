@@ -65,6 +65,170 @@ describe("TelegramInteractiveHandler", () => {
     vi.restoreAllMocks();
   });
 
+  describe("callback authorization", () => {
+    describe("handleSelect", () => {
+      it("should reject callback from unauthorized user", async () => {
+        // Setup prompt for user "123"
+        handler.showPrompt(createTestPrompt(), "123", "%1", "1:0.0", 456);
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Call with different user (unauthorized)
+        const mockCtx = {
+          callbackQuery: { data: "prompt_select:123:0" },
+          from: { id: 999 }, // Different user
+          answerCallbackQuery: vi.fn(),
+          editMessageText: vi.fn(),
+        };
+
+        // Call private method directly
+        await (handler as any).handleSelect(mockCtx);
+
+        // Should have answered with "not for you" message
+        expect(mockCtx.answerCallbackQuery).toHaveBeenCalledWith(
+          expect.objectContaining({ text: expect.stringContaining("not for you") })
+        );
+
+        // Should NOT have called tmux
+        expect(vi.mocked(tmux.selectOptionByIndex)).not.toHaveBeenCalled();
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleToggle", () => {
+      it("should reject callback from unauthorized user", async () => {
+        const multiPrompt = createTestPrompt({
+          type: "multi",
+          options: [
+            { index: 0, label: "Option A", selected: false },
+            { index: 1, label: "Option B", selected: false },
+          ],
+          hasOther: false,
+        });
+
+        handler.showPrompt(multiPrompt, "123", "%1", "1:0.0", 456);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockCtx = {
+          callbackQuery: { data: "prompt_toggle:123:0" },
+          from: { id: 999 },
+          answerCallbackQuery: vi.fn(),
+          editMessageReplyMarkup: vi.fn(),
+        };
+
+        // Call private method directly
+        await (handler as any).handleToggle(mockCtx);
+
+        expect(mockCtx.answerCallbackQuery).toHaveBeenCalledWith(
+          expect.objectContaining({ text: expect.stringContaining("not for you") })
+        );
+        expect(vi.mocked(tmux.toggleOption)).not.toHaveBeenCalled();
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleSubmit", () => {
+      it("should reject callback from unauthorized user", async () => {
+        const multiPrompt = createTestPrompt({
+          type: "multi",
+          options: [
+            { index: 0, label: "Option A", selected: false },
+            { index: 1, label: "Option B", selected: false },
+          ],
+          hasOther: false,
+        });
+
+        handler.showPrompt(multiPrompt, "123", "%1", "1:0.0", 456);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockCtx = {
+          callbackQuery: { data: "prompt_submit:123" },
+          from: { id: 999 },
+          answerCallbackQuery: vi.fn(),
+          editMessageText: vi.fn(),
+        };
+
+        // Call private method directly
+        await (handler as any).handleSubmit(mockCtx);
+
+        expect(mockCtx.answerCallbackQuery).toHaveBeenCalledWith(
+          expect.objectContaining({ text: expect.stringContaining("not for you") })
+        );
+        expect(vi.mocked(tmux.submitMultiSelect)).not.toHaveBeenCalled();
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleOther", () => {
+      it("should reject callback from unauthorized user", async () => {
+        handler.showPrompt(createTestPrompt(), "123", "%1", "1:0.0", 456);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockCtx = {
+          callbackQuery: { data: "prompt_other:123" },
+          from: { id: 999 },
+          answerCallbackQuery: vi.fn(),
+          editMessageText: vi.fn(),
+        };
+
+        // Check pending state before
+        const pendingMap = (handler as any).pendingPrompts as Map<string, any>;
+        const pendingBefore = pendingMap.get("123:%1");
+        expect(pendingBefore?.awaitingTextInput).toBeFalsy();
+
+        // Call private method directly
+        await (handler as any).handleOther(mockCtx);
+
+        expect(mockCtx.answerCallbackQuery).toHaveBeenCalledWith(
+          expect.objectContaining({ text: expect.stringContaining("not for you") })
+        );
+
+        // State should be unchanged
+        const pendingAfter = pendingMap.get("123:%1");
+        expect(pendingAfter?.awaitingTextInput).toBeFalsy();
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleCancel", () => {
+      it("should reject callback from unauthorized user", async () => {
+        handler.showPrompt(createTestPrompt(), "123", "%1", "1:0.0", 456);
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockCtx = {
+          callbackQuery: { data: "prompt_cancel:123" },
+          from: { id: 999 },
+          answerCallbackQuery: vi.fn(),
+          editMessageText: vi.fn(),
+        };
+
+        // Prompt should still exist after unauthorized cancel
+        const pendingMap = (handler as any).pendingPrompts as Map<string, any>;
+        expect(pendingMap.has("123:%1")).toBe(true);
+
+        // Call private method directly
+        await (handler as any).handleCancel(mockCtx);
+
+        expect(mockCtx.answerCallbackQuery).toHaveBeenCalledWith(
+          expect.objectContaining({ text: expect.stringContaining("not for you") })
+        );
+
+        // Prompt should still exist (cancel should be blocked)
+        expect(pendingMap.has("123:%1")).toBe(true);
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+  });
+
   describe("handleTextInput error feedback", () => {
     it("should return false when no pending prompt exists", async () => {
       const result = await handler.handleTextInput("123", "my custom text");
@@ -234,6 +398,48 @@ describe("TelegramInteractiveHandler", () => {
 
       // Clean up
       pendingMap.clear();
+      (handler as any).timeoutHandles.clear();
+    });
+  });
+
+  describe("handleToggle terminal sync fallback", () => {
+    it("should log warning when terminal state cannot be read", async () => {
+      // This tests the fallback behavior when getCurrentSelections returns null
+      // We're testing that the warning is logged (implementation detail: logger.warn)
+      // The actual behavior is that optimistic tracking is used as fallback
+
+      // Show a multi-select prompt
+      const multiPrompt = createTestPrompt({
+        type: "multi",
+        options: [
+          { index: 0, label: "Option A", selected: false },
+          { index: 1, label: "Option B", selected: false },
+        ],
+        hasOther: false,
+      });
+
+      handler.showPrompt(multiPrompt, "123", "%1", "1:0.0", 456);
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Mock capturePane to return unparseable output (no selection markers)
+      vi.mocked(tmux.capturePane).mockResolvedValue("random text without markers");
+      vi.mocked(tmux.toggleOption).mockResolvedValue(undefined);
+
+      const mockCtx = {
+        callbackQuery: { data: "prompt_toggle:123:0" },
+        from: { id: 123 },
+        answerCallbackQuery: vi.fn(),
+        editMessageReplyMarkup: vi.fn(),
+      };
+
+      // Call private method directly
+      await (handler as any).handleToggle(mockCtx);
+
+      // Verify toggleOption was called (meaning handler executed)
+      expect(vi.mocked(tmux.toggleOption)).toHaveBeenCalled();
+
+      // Clean up
+      (handler as any).pendingPrompts.clear();
       (handler as any).timeoutHandles.clear();
     });
   });

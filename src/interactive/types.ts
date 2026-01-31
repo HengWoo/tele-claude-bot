@@ -25,8 +25,8 @@ export interface DetectedPrompt {
   type: "single" | "multi";
   /** Question header text */
   question: string;
-  /** Available options */
-  options: PromptOption[];
+  /** Available options (readonly to prevent mutation) */
+  readonly options: readonly PromptOption[];
   /** Whether "Other" free-text option is available */
   hasOther: boolean;
   /** Raw terminal output for debugging */
@@ -79,7 +79,7 @@ export interface PendingPrompt {
  * @param userId - User ID
  * @param paneId - Stable pane ID (e.g., "%4")
  * @param target - tmux target (e.g., "1:0.0")
- * @param chatId - Platform chat ID
+ * @param chatId - Platform chat ID (number for Telegram, string for Feishu)
  * @returns Promise that resolves when user responds
  */
 export type InteractiveCallback = (
@@ -87,5 +87,5 @@ export type InteractiveCallback = (
   userId: string,
   paneId: string,
   target: string,
-  chatId: number
+  chatId: string | number
 ) => Promise<PromptResponse | null>;

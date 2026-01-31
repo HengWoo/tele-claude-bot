@@ -302,6 +302,14 @@ export class FeishuInteractiveHandler {
       logger.info({ userId, optionIndex, selectedLabel }, "Option selected");
     } catch (error) {
       logger.error({ error: (error as Error).message, userId, optionIndex }, "Failed to select option");
+      try {
+        await this.adapter.sendMessage(
+          pending.chatId,
+          "Failed to process your selection. Please try again."
+        );
+      } catch (msgError) {
+        logger.warn({ error: (msgError as Error).message }, "Failed to send error message");
+      }
     }
   }
 
@@ -362,6 +370,10 @@ export class FeishuInteractiveHandler {
         pending.toggledIndices = new Set(terminalSelections);
       } else {
         // Fallback: update our tracking optimistically
+        logger.warn(
+          { target: pending.target, userId },
+          "Could not read terminal state, using optimistic tracking"
+        );
         if (pending.toggledIndices.has(optionIndex)) {
           pending.toggledIndices.delete(optionIndex);
         } else {
@@ -376,6 +388,14 @@ export class FeishuInteractiveHandler {
       logger.debug({ userId, optionIndex }, "Option toggled");
     } catch (error) {
       logger.error({ error: (error as Error).message, userId, optionIndex }, "Failed to toggle option");
+      try {
+        await this.adapter.sendMessage(
+          pending.chatId,
+          "Failed to toggle option. Please try again."
+        );
+      } catch (msgError) {
+        logger.warn({ error: (msgError as Error).message }, "Failed to send error message");
+      }
     }
   }
 
@@ -435,6 +455,14 @@ export class FeishuInteractiveHandler {
       logger.info({ userId, selectedIndices: response.selectedIndices }, "Multi-select submitted");
     } catch (error) {
       logger.error({ error: (error as Error).message, userId }, "Failed to submit multi-select");
+      try {
+        await this.adapter.sendMessage(
+          pending.chatId,
+          "Failed to submit your selections. Please try again."
+        );
+      } catch (msgError) {
+        logger.warn({ error: (msgError as Error).message }, "Failed to send error message");
+      }
     }
   }
 

@@ -65,6 +65,257 @@ describe("FeishuInteractiveHandler", () => {
     vi.restoreAllMocks();
   });
 
+  describe("callback error feedback", () => {
+    describe("handleSelect", () => {
+      it("should send error when tmux injection fails", async () => {
+        // Show a prompt
+        handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Mock tmux failure
+        vi.mocked(tmux.selectOptionByIndex).mockRejectedValue(new Error("tmux injection failed"));
+
+        const mockEvent = {
+          data: "prompt_select:user123:0",
+          from: { id: "user123" },
+          chat: { id: "chat_456" },
+        };
+
+        // Call private method directly
+        await (handler as any).handleSelect(mockEvent);
+
+        // Should have sent error message via adapter
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("Failed to")
+        );
+
+        // Clean up
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleToggle", () => {
+      it("should send error when tmux toggle fails", async () => {
+        // Show a multi-select prompt
+        const multiPrompt = createTestPrompt({
+          type: "multi",
+          options: [
+            { index: 0, label: "Option A", selected: false },
+            { index: 1, label: "Option B", selected: false },
+          ],
+          hasOther: false,
+        });
+
+        handler.showPrompt(multiPrompt, "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Mock tmux failure
+        vi.mocked(tmux.toggleOption).mockRejectedValue(new Error("tmux toggle failed"));
+
+        const mockEvent = {
+          data: "prompt_toggle:user123:0",
+          from: { id: "user123" },
+          chat: { id: "chat_456" },
+        };
+
+        // Call private method directly
+        await (handler as any).handleToggle(mockEvent);
+
+        // Should have sent error message via adapter
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("Failed to")
+        );
+
+        // Clean up
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleSubmit", () => {
+      it("should send error when tmux submit fails", async () => {
+        // Show a multi-select prompt
+        const multiPrompt = createTestPrompt({
+          type: "multi",
+          options: [
+            { index: 0, label: "Option A", selected: false },
+            { index: 1, label: "Option B", selected: false },
+          ],
+          hasOther: false,
+        });
+
+        handler.showPrompt(multiPrompt, "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Mock tmux failure
+        vi.mocked(tmux.submitMultiSelect).mockRejectedValue(new Error("tmux submit failed"));
+
+        const mockEvent = {
+          data: "prompt_submit:user123",
+          from: { id: "user123" },
+          chat: { id: "chat_456" },
+        };
+
+        // Call private method directly
+        await (handler as any).handleSubmit(mockEvent);
+
+        // Should have sent error message via adapter
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("Failed to")
+        );
+
+        // Clean up
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+  });
+
+  describe("callback authorization", () => {
+    describe("handleSelect", () => {
+      it("should reject callback from unauthorized user", async () => {
+        // Setup prompt for user123
+        handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Call with different user (unauthorized)
+        const mockEvent = {
+          data: "prompt_select:user123:0",
+          from: { id: "attacker456" }, // Different user
+          chat: { id: "chat_456" },
+        };
+
+        // Call private method directly
+        await (handler as any).handleSelect(mockEvent);
+
+        // Should NOT have called tmux (action should be blocked)
+        expect(vi.mocked(tmux.selectOptionByIndex)).not.toHaveBeenCalled();
+
+        // Clean up
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleToggle", () => {
+      it("should reject callback from unauthorized user", async () => {
+        const multiPrompt = createTestPrompt({
+          type: "multi",
+          options: [
+            { index: 0, label: "Option A", selected: false },
+            { index: 1, label: "Option B", selected: false },
+          ],
+          hasOther: false,
+        });
+
+        handler.showPrompt(multiPrompt, "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockEvent = {
+          data: "prompt_toggle:user123:0",
+          from: { id: "attacker456" },
+          chat: { id: "chat_456" },
+        };
+
+        // Call private method directly
+        await (handler as any).handleToggle(mockEvent);
+
+        expect(vi.mocked(tmux.toggleOption)).not.toHaveBeenCalled();
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleSubmit", () => {
+      it("should reject callback from unauthorized user", async () => {
+        const multiPrompt = createTestPrompt({
+          type: "multi",
+          options: [
+            { index: 0, label: "Option A", selected: false },
+            { index: 1, label: "Option B", selected: false },
+          ],
+          hasOther: false,
+        });
+
+        handler.showPrompt(multiPrompt, "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockEvent = {
+          data: "prompt_submit:user123",
+          from: { id: "attacker456" },
+          chat: { id: "chat_456" },
+        };
+
+        // Call private method directly
+        await (handler as any).handleSubmit(mockEvent);
+
+        expect(vi.mocked(tmux.submitMultiSelect)).not.toHaveBeenCalled();
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleOther", () => {
+      it("should reject callback from unauthorized user", async () => {
+        handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockEvent = {
+          data: "prompt_other:user123",
+          from: { id: "attacker456" },
+          chat: { id: "chat_456" },
+        };
+
+        // Check pending state before
+        const pendingMap = (handler as any).pendingPrompts as Map<string, any>;
+        const pendingBefore = pendingMap.get("user123:%1");
+        expect(pendingBefore?.awaitingTextInput).toBeFalsy();
+
+        // Call private method directly
+        await (handler as any).handleOther(mockEvent);
+
+        // State should be unchanged (attacker should not be able to set awaitingTextInput)
+        const pendingAfter = pendingMap.get("user123:%1");
+        expect(pendingAfter?.awaitingTextInput).toBeFalsy();
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleCancel", () => {
+      it("should reject callback from unauthorized user", async () => {
+        handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockEvent = {
+          data: "prompt_cancel:user123",
+          from: { id: "attacker456" },
+          chat: { id: "chat_456" },
+        };
+
+        // Prompt should still exist after unauthorized cancel
+        const pendingMap = (handler as any).pendingPrompts as Map<string, any>;
+        expect(pendingMap.has("user123:%1")).toBe(true);
+
+        // Call private method directly
+        await (handler as any).handleCancel(mockEvent);
+
+        // Prompt should still exist (cancel should be blocked)
+        expect(pendingMap.has("user123:%1")).toBe(true);
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+  });
+
   describe("handleTextInput error feedback", () => {
     it("should return false when no pending prompt exists", async () => {
       const result = await handler.handleTextInput("user123", "my custom text");
@@ -228,6 +479,43 @@ describe("FeishuInteractiveHandler", () => {
 
       // Clean up
       pendingMap.clear();
+      (handler as any).timeoutHandles.clear();
+    });
+  });
+
+  describe("handleToggle terminal sync fallback", () => {
+    it("should log warning when terminal state cannot be read", async () => {
+      // Show a multi-select prompt
+      const multiPrompt = createTestPrompt({
+        type: "multi",
+        options: [
+          { index: 0, label: "Option A", selected: false },
+          { index: 1, label: "Option B", selected: false },
+        ],
+        hasOther: false,
+      });
+
+      handler.showPrompt(multiPrompt, "user123", "%1", "1:0.0", "chat_456");
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Mock capturePane to return unparseable output (no selection markers)
+      vi.mocked(tmux.capturePane).mockResolvedValue("random text without markers");
+      vi.mocked(tmux.toggleOption).mockResolvedValue(undefined);
+
+      const mockEvent = {
+        data: "prompt_toggle:user123:0",
+        from: { id: "user123" },
+        chat: { id: "chat_456" },
+      };
+
+      // Call private method directly
+      await (handler as any).handleToggle(mockEvent);
+
+      // Verify toggleOption was called (meaning handler executed)
+      expect(vi.mocked(tmux.toggleOption)).toHaveBeenCalled();
+
+      // Clean up
+      (handler as any).pendingPrompts.clear();
       (handler as any).timeoutHandles.clear();
     });
   });
