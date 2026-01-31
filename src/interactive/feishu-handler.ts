@@ -239,6 +239,17 @@ export class FeishuInteractiveHandler {
   }
 
   /**
+   * Send error feedback to user (best-effort, won't throw)
+   */
+  private async sendErrorFeedback(chatId: string, message: string): Promise<void> {
+    try {
+      await this.adapter.sendMessage(chatId, message);
+    } catch (error) {
+      logger.warn({ error: (error as Error).message, chatId }, "Failed to send error feedback");
+    }
+  }
+
+  /**
    * Handle single-select option selection
    */
   private async handleSelect(event: { data: string; from: { id: string }; chat: { id: string } }): Promise<void> {
@@ -246,6 +257,7 @@ export class FeishuInteractiveHandler {
     const parts = event.data.split(":");
     if (parts.length !== 3) {
       logger.debug({ data: event.data }, "Invalid select callback data format");
+      await this.sendErrorFeedback(event.chat.id, "Invalid request format.");
       return;
     }
 
@@ -255,30 +267,35 @@ export class FeishuInteractiveHandler {
     // Verify the callback is from the user who owns this prompt
     if (event.from.id !== userId) {
       logger.warn({ callerId: event.from.id, expectedUserId: userId }, "Unauthorized select attempt");
+      await this.sendErrorFeedback(event.chat.id, "This prompt is not for you.");
       return;
     }
 
     // Validate parsed optionIndex
     if (Number.isNaN(optionIndex)) {
       logger.warn({ userId, rawIndex: parts[2] }, "Invalid option index (NaN)");
+      await this.sendErrorFeedback(event.chat.id, "Invalid option selected.");
       return;
     }
 
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
       logger.debug({ userId }, "No pending prompt found for select");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
     const pending = this.pendingPrompts.get(promptKey);
     if (!pending) {
       logger.debug({ promptKey }, "Pending prompt not in map");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
     // Validate option index bounds
     if (optionIndex < 0 || optionIndex >= pending.prompt.options.length) {
       logger.warn({ userId, optionIndex, maxIndex: pending.prompt.options.length - 1 }, "Option index out of bounds");
+      await this.sendErrorFeedback(event.chat.id, "Invalid option selected.");
       return;
     }
 
@@ -320,6 +337,7 @@ export class FeishuInteractiveHandler {
     const parts = event.data.split(":");
     if (parts.length !== 3) {
       logger.debug({ data: event.data }, "Invalid toggle callback data format");
+      await this.sendErrorFeedback(event.chat.id, "Invalid request format.");
       return;
     }
 
@@ -329,30 +347,35 @@ export class FeishuInteractiveHandler {
     // Verify the callback is from the user who owns this prompt
     if (event.from.id !== userId) {
       logger.warn({ callerId: event.from.id, expectedUserId: userId }, "Unauthorized toggle attempt");
+      await this.sendErrorFeedback(event.chat.id, "This prompt is not for you.");
       return;
     }
 
     // Validate parsed optionIndex
     if (Number.isNaN(optionIndex)) {
       logger.warn({ userId, rawIndex: parts[2] }, "Invalid option index (NaN)");
+      await this.sendErrorFeedback(event.chat.id, "Invalid option selected.");
       return;
     }
 
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
       logger.debug({ userId }, "No pending prompt found for toggle");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
     const pending = this.pendingPrompts.get(promptKey);
     if (!pending || !pending.toggledIndices) {
       logger.debug({ promptKey, hasToggledIndices: !!pending?.toggledIndices }, "Pending prompt missing or not multi-select");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
     // Validate option index bounds
     if (optionIndex < 0 || optionIndex >= pending.prompt.options.length) {
       logger.warn({ userId, optionIndex, maxIndex: pending.prompt.options.length - 1 }, "Option index out of bounds");
+      await this.sendErrorFeedback(event.chat.id, "Invalid option selected.");
       return;
     }
 
@@ -406,6 +429,7 @@ export class FeishuInteractiveHandler {
     const parts = event.data.split(":");
     if (parts.length !== 2) {
       logger.debug({ data: event.data }, "Invalid submit callback data format");
+      await this.sendErrorFeedback(event.chat.id, "Invalid request format.");
       return;
     }
 
@@ -414,18 +438,21 @@ export class FeishuInteractiveHandler {
     // Verify the callback is from the user who owns this prompt
     if (event.from.id !== userId) {
       logger.warn({ callerId: event.from.id, expectedUserId: userId }, "Unauthorized submit attempt");
+      await this.sendErrorFeedback(event.chat.id, "This prompt is not for you.");
       return;
     }
 
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
       logger.debug({ userId }, "No pending prompt found for submit");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
     const pending = this.pendingPrompts.get(promptKey);
     if (!pending) {
       logger.debug({ promptKey }, "Pending prompt not in map");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
@@ -473,6 +500,7 @@ export class FeishuInteractiveHandler {
     const parts = event.data.split(":");
     if (parts.length !== 2) {
       logger.debug({ data: event.data }, "Invalid other callback data format");
+      await this.sendErrorFeedback(event.chat.id, "Invalid request format.");
       return;
     }
 
@@ -481,18 +509,21 @@ export class FeishuInteractiveHandler {
     // Verify the callback is from the user who owns this prompt
     if (event.from.id !== userId) {
       logger.warn({ callerId: event.from.id, expectedUserId: userId }, "Unauthorized other attempt");
+      await this.sendErrorFeedback(event.chat.id, "This prompt is not for you.");
       return;
     }
 
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
       logger.debug({ userId }, "No pending prompt found for other");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
     const pending = this.pendingPrompts.get(promptKey);
     if (!pending) {
       logger.debug({ promptKey }, "Pending prompt not in map");
+      await this.sendErrorFeedback(event.chat.id, "This prompt has expired. Please wait for a new prompt.");
       return;
     }
 
@@ -508,6 +539,17 @@ export class FeishuInteractiveHandler {
     } catch (error) {
       logger.error({ error: (error as Error).message, userId }, "Failed to send text input prompt");
       pending.awaitingTextInput = false;
+
+      // Update card to show error so user knows what happened
+      try {
+        await this.updateCardWithResult(
+          pending.chatId,
+          pending.messageId as string,
+          "Error: Could not request custom input. Please try again."
+        );
+      } catch (updateErr) {
+        logger.warn({ error: (updateErr as Error).message }, "Failed to update card with error");
+      }
     }
   }
 
@@ -597,6 +639,7 @@ export class FeishuInteractiveHandler {
     const parts = event.data.split(":");
     if (parts.length !== 2) {
       logger.debug({ data: event.data }, "Invalid cancel callback data format");
+      await this.sendErrorFeedback(event.chat.id, "Invalid request format.");
       return;
     }
 
@@ -605,6 +648,7 @@ export class FeishuInteractiveHandler {
     // Verify the callback is from the user who owns this prompt
     if (event.from.id !== userId) {
       logger.warn({ callerId: event.from.id, expectedUserId: userId }, "Unauthorized cancel attempt");
+      await this.sendErrorFeedback(event.chat.id, "This prompt is not for you.");
       return;
     }
 

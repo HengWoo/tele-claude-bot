@@ -177,7 +177,7 @@ describe("FeishuInteractiveHandler", () => {
 
   describe("callback authorization", () => {
     describe("handleSelect", () => {
-      it("should reject callback from unauthorized user", async () => {
+      it("should reject callback from unauthorized user and send feedback", async () => {
         // Setup prompt for user123
         handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
         await new Promise((r) => setTimeout(r, 0));
@@ -195,6 +195,12 @@ describe("FeishuInteractiveHandler", () => {
         // Should NOT have called tmux (action should be blocked)
         expect(vi.mocked(tmux.selectOptionByIndex)).not.toHaveBeenCalled();
 
+        // Should have sent error feedback
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("not for you")
+        );
+
         // Clean up
         (handler as any).pendingPrompts.clear();
         (handler as any).timeoutHandles.clear();
@@ -202,7 +208,7 @@ describe("FeishuInteractiveHandler", () => {
     });
 
     describe("handleToggle", () => {
-      it("should reject callback from unauthorized user", async () => {
+      it("should reject callback from unauthorized user and send feedback", async () => {
         const multiPrompt = createTestPrompt({
           type: "multi",
           options: [
@@ -226,13 +232,19 @@ describe("FeishuInteractiveHandler", () => {
 
         expect(vi.mocked(tmux.toggleOption)).not.toHaveBeenCalled();
 
+        // Should have sent error feedback
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("not for you")
+        );
+
         (handler as any).pendingPrompts.clear();
         (handler as any).timeoutHandles.clear();
       });
     });
 
     describe("handleSubmit", () => {
-      it("should reject callback from unauthorized user", async () => {
+      it("should reject callback from unauthorized user and send feedback", async () => {
         const multiPrompt = createTestPrompt({
           type: "multi",
           options: [
@@ -256,13 +268,19 @@ describe("FeishuInteractiveHandler", () => {
 
         expect(vi.mocked(tmux.submitMultiSelect)).not.toHaveBeenCalled();
 
+        // Should have sent error feedback
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("not for you")
+        );
+
         (handler as any).pendingPrompts.clear();
         (handler as any).timeoutHandles.clear();
       });
     });
 
     describe("handleOther", () => {
-      it("should reject callback from unauthorized user", async () => {
+      it("should reject callback from unauthorized user and send feedback", async () => {
         handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
         await new Promise((r) => setTimeout(r, 0));
 
@@ -284,13 +302,19 @@ describe("FeishuInteractiveHandler", () => {
         const pendingAfter = pendingMap.get("user123:%1");
         expect(pendingAfter?.awaitingTextInput).toBeFalsy();
 
+        // Should have sent error feedback
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("not for you")
+        );
+
         (handler as any).pendingPrompts.clear();
         (handler as any).timeoutHandles.clear();
       });
     });
 
     describe("handleCancel", () => {
-      it("should reject callback from unauthorized user", async () => {
+      it("should reject callback from unauthorized user and send feedback", async () => {
         handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
         await new Promise((r) => setTimeout(r, 0));
 
@@ -309,6 +333,92 @@ describe("FeishuInteractiveHandler", () => {
 
         // Prompt should still exist (cancel should be blocked)
         expect(pendingMap.has("user123:%1")).toBe(true);
+
+        // Should have sent error feedback
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("not for you")
+        );
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+  })
+
+  describe("validation error feedback", () => {
+    describe("handleSelect", () => {
+      it("should send feedback when prompt not found", async () => {
+        const mockEvent = {
+          data: "prompt_select:unknownUser:0",
+          from: { id: "unknownUser" },
+          chat: { id: "chat_456" },
+        };
+
+        await (handler as any).handleSelect(mockEvent);
+
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("expired")
+        );
+      });
+
+      it("should send feedback when option index is invalid", async () => {
+        handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        const mockEvent = {
+          data: "prompt_select:user123:99", // Out of bounds
+          from: { id: "user123" },
+          chat: { id: "chat_456" },
+        };
+
+        await (handler as any).handleSelect(mockEvent);
+
+        expect(mockAdapter.sendMessage).toHaveBeenCalledWith(
+          "chat_456",
+          expect.stringContaining("Invalid option")
+        );
+
+        (handler as any).pendingPrompts.clear();
+        (handler as any).timeoutHandles.clear();
+      });
+    });
+
+    describe("handleOther", () => {
+      it("should update card with error when sendMessage fails", async () => {
+        handler.showPrompt(createTestPrompt(), "user123", "%1", "1:0.0", "chat_456");
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Mock sendMessage to fail
+        mockAdapter.sendMessage.mockRejectedValueOnce(new Error("Feishu API error"));
+
+        const mockEvent = {
+          data: "prompt_other:user123",
+          from: { id: "user123" },
+          chat: { id: "chat_456" },
+        };
+
+        await (handler as any).handleOther(mockEvent);
+
+        // Should have tried to update card with error
+        expect(mockAdapter.getClient().updateCard).toHaveBeenCalledWith(
+          "card_msg_id",
+          expect.objectContaining({
+            elements: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.objectContaining({
+                  content: expect.stringContaining("Error")
+                })
+              })
+            ])
+          })
+        );
+
+        // awaitingTextInput should be reset
+        const pendingMap = (handler as any).pendingPrompts as Map<string, any>;
+        const pending = pendingMap.get("user123:%1");
+        expect(pending?.awaitingTextInput).toBe(false);
 
         (handler as any).pendingPrompts.clear();
         (handler as any).timeoutHandles.clear();
