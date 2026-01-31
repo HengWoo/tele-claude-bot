@@ -203,6 +203,19 @@ export class TelegramInteractiveHandler {
     const userId = parts[1];
     const optionIndex = parseInt(parts[2], 10);
 
+    // Verify the callback is from the user who owns this prompt
+    if (ctx.from?.id.toString() !== userId) {
+      logger.warn({ callerId: ctx.from?.id, expectedUserId: userId }, "Unauthorized callback attempt");
+      await ctx.answerCallbackQuery({ text: "This prompt is not for you" });
+      return;
+    }
+
+    // Validate parsed optionIndex
+    if (Number.isNaN(optionIndex)) {
+      await ctx.answerCallbackQuery({ text: "Invalid option index" });
+      return;
+    }
+
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
       await ctx.answerCallbackQuery({ text: "Prompt expired or not found" });
@@ -262,6 +275,19 @@ export class TelegramInteractiveHandler {
 
     const userId = parts[1];
     const optionIndex = parseInt(parts[2], 10);
+
+    // Verify the callback is from the user who owns this prompt
+    if (ctx.from?.id.toString() !== userId) {
+      logger.warn({ callerId: ctx.from?.id, expectedUserId: userId }, "Unauthorized toggle attempt");
+      await ctx.answerCallbackQuery({ text: "This prompt is not for you" });
+      return;
+    }
+
+    // Validate parsed optionIndex
+    if (Number.isNaN(optionIndex)) {
+      await ctx.answerCallbackQuery({ text: "Invalid option index" });
+      return;
+    }
 
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
@@ -327,6 +353,14 @@ export class TelegramInteractiveHandler {
     }
 
     const userId = parts[1];
+
+    // Verify the callback is from the user who owns this prompt
+    if (ctx.from?.id.toString() !== userId) {
+      logger.warn({ callerId: ctx.from?.id, expectedUserId: userId }, "Unauthorized submit attempt");
+      await ctx.answerCallbackQuery({ text: "This prompt is not for you" });
+      return;
+    }
+
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
       await ctx.answerCallbackQuery({ text: "Prompt expired or not found" });
@@ -382,6 +416,14 @@ export class TelegramInteractiveHandler {
     }
 
     const userId = parts[1];
+
+    // Verify the callback is from the user who owns this prompt
+    if (ctx.from?.id.toString() !== userId) {
+      logger.warn({ callerId: ctx.from?.id, expectedUserId: userId }, "Unauthorized other attempt");
+      await ctx.answerCallbackQuery({ text: "This prompt is not for you" });
+      return;
+    }
+
     const promptKey = this.findPromptKey(userId);
     if (!promptKey) {
       await ctx.answerCallbackQuery({ text: "Prompt expired or not found" });
@@ -491,6 +533,14 @@ export class TelegramInteractiveHandler {
     }
 
     const userId = parts[1];
+
+    // Verify the callback is from the user who owns this prompt
+    if (ctx.from?.id.toString() !== userId) {
+      logger.warn({ callerId: ctx.from?.id, expectedUserId: userId }, "Unauthorized cancel attempt");
+      await ctx.answerCallbackQuery({ text: "This prompt is not for you" });
+      return;
+    }
+
     const promptKey = this.findPromptKey(userId);
 
     if (promptKey) {
@@ -654,8 +704,8 @@ export class TelegramInteractiveHandler {
         await this.bot.api.editMessageText(chatId, messageId, "<b>Bot shutting down</b>", {
           parse_mode: "HTML",
         });
-      } catch {
-        // Ignore errors during cleanup
+      } catch (error) {
+        logger.debug({ error: (error as Error).message, promptKey }, "Failed to update message during cleanup");
       }
     }
 
