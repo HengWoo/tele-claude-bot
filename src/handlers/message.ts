@@ -15,8 +15,8 @@ export interface SessionManager {
 }
 
 export interface ClaudeBridge {
-  sendMessage(session: Session, message: string): AsyncIterable<string>;
-  isSessionActive(session: Session): boolean;
+  sendMessage(session: Session, message: string, userId: string): AsyncIterable<string>;
+  isSessionActive(session: Session, userId: string): boolean;
 }
 
 /**
@@ -61,13 +61,13 @@ export async function handleTextMessage(
     // Update last used timestamp
     session.lastUsed = Date.now();
 
-    // Check if Claude session is active
-    if (!claudeBridge.isSessionActive(session)) {
+    // Check if Claude session is active for this user
+    if (!claudeBridge.isSessionActive(session, userIdStr)) {
       logger.info({ userId, sessionId: session.id }, "Starting new Claude session");
     }
 
-    // Stream response from Claude to Telegram
-    const responseStream = claudeBridge.sendMessage(session, messageText);
+    // Stream response from Claude to Telegram (pass userId for per-user targeting)
+    const responseStream = claudeBridge.sendMessage(session, messageText, userIdStr);
     await streamToTelegram(ctx, responseStream);
 
     logger.info({ userId, sessionId: session.id }, "Message processed successfully");

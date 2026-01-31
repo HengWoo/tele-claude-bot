@@ -187,4 +187,10 @@ export interface FeishuConfig {
   verificationToken?: string;
   /** Optional encrypt key for webhook encryption */
   encryptKey?: string;
+  /** Allow all users (for testing only, requires explicit opt-in) */
+  allowAll?: boolean;
+  /** Rate limiting configuration */
+  rateLimit?: {
+    messagesPerMinute: number;
+  };
 }

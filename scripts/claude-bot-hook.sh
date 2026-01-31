@@ -44,24 +44,19 @@ echo "HOOK_INPUT: $HOOK_INPUT" >> "$LOG_FILE"
 TRANSCRIPT_PATH=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // empty')
 echo "TRANSCRIPT_PATH: $TRANSCRIPT_PATH" >> "$LOG_FILE"
 
-# Get current tmux target (session:window.pane)
-if [ -n "$TMUX_PANE" ]; then
-    TARGET=$(tmux display-message -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)
-    echo "TMUX_PANE: $TMUX_PANE, TARGET: $TARGET" >> "$LOG_FILE"
-else
+# Use stable pane ID directly - no tmux query needed
+# $TMUX_PANE is set by tmux when the session starts (e.g., "%4")
+# It never changes for the life of the pane, unlike positional addresses
+if [ -z "$TMUX_PANE" ]; then
     echo "Not in tmux (TMUX_PANE not set)" >> "$LOG_FILE"
     echo "---" >> "$LOG_FILE"
     exit 0
 fi
 
-if [ -z "$TARGET" ]; then
-    echo "Could not determine tmux target" >> "$LOG_FILE"
-    echo "---" >> "$LOG_FILE"
-    exit 0
-fi
+echo "TMUX_PANE: $TMUX_PANE" >> "$LOG_FILE"
 
-# Sanitize target for filename (replace : and . with -)
-SAFE_TARGET=$(echo "$TARGET" | tr ':.' '-')
+# Sanitize pane ID for filename (% -> p, so "%4" becomes "p4")
+SAFE_TARGET=$(echo "$TMUX_PANE" | tr '%' 'p')
 
 # Extract response from transcript if available
 RESPONSE=""

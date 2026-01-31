@@ -113,15 +113,30 @@ export function loadConfig(): Config {
       throw new Error("FEISHU_DOMAIN must be either 'feishu' or 'lark'");
     }
 
+    const allowAll = getEnvBoolean("FEISHU_ALLOW_ALL", false);
+    const allowedUsers = getEnvStringArray("FEISHU_ALLOWED_USERS", []);
+
+    // Require explicit authorization config
+    if (allowedUsers.length === 0 && !allowAll) {
+      throw new Error(
+        "FEISHU_ALLOWED_USERS is required when FEISHU_ENABLED=true. " +
+        "Set FEISHU_ALLOW_ALL=true to allow all users (testing only)."
+      );
+    }
+
     feishu = {
       enabled: true,
       appId,
       appSecret,
       webhookPort: getEnvNumber("FEISHU_WEBHOOK_PORT", 3000),
-      allowedUsers: getEnvStringArray("FEISHU_ALLOWED_USERS", []),
+      allowedUsers,
       domain,
       verificationToken: process.env.FEISHU_VERIFICATION_TOKEN,
       encryptKey: process.env.FEISHU_ENCRYPT_KEY,
+      allowAll,
+      rateLimit: {
+        messagesPerMinute: getEnvNumber("FEISHU_RATE_LIMIT", 30),
+      },
     };
   }
 

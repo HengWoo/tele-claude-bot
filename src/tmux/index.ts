@@ -8,6 +8,7 @@ const logger = createChildLogger("tmux");
 
 export interface TmuxPane {
   target: string;
+  paneId: string;  // Stable pane ID (e.g., "%4") - never changes for the life of the pane
   command: string;
   session: string;
   window: number;
@@ -109,7 +110,7 @@ export async function listPanes(): Promise<TmuxPane[]> {
       "list-panes",
       "-a",
       "-F",
-      "#{session_name}|#{window_index}|#{pane_index}|#{pane_current_command}|#{pane_active}|#{pane_title}",
+      "#{session_name}|#{window_index}|#{pane_index}|#{pane_id}|#{pane_current_command}|#{pane_active}|#{pane_title}",
     ]);
 
     if (!stdout.trim()) {
@@ -120,11 +121,12 @@ export async function listPanes(): Promise<TmuxPane[]> {
       .trim()
       .split("\n")
       .map((line) => {
-        const [session, windowStr, paneStr, command, activeStr, title] = line.split("|");
+        const [session, windowStr, paneStr, paneId, command, activeStr, title] = line.split("|");
         const window = parseInt(windowStr, 10);
         const pane = parseInt(paneStr, 10);
         return {
           target: `${session}:${window}.${pane}`,
+          paneId,  // Stable ID like "%4"
           command,
           session,
           window,
@@ -191,6 +193,24 @@ export async function getPaneInfo(target: string): Promise<TmuxPane | null> {
 
   const panes = await listPanes();
   return panes.find((p) => p.target === target) ?? null;
+}
+
+/**
+ * Get the stable pane ID for a positional target
+ * @param target - Positional target like "1:2.1"
+ * @returns Stable pane ID like "%4", or null if not found
+ */
+export async function getPaneId(target: string): Promise<string | null> {
+  const paneInfo = await getPaneInfo(target);
+  return paneInfo?.paneId ?? null;
+}
+
+/**
+ * Sanitize pane ID for use in filenames
+ * Converts "%4" to "p4"
+ */
+export function sanitizePaneId(paneId: string): string {
+  return paneId.replace("%", "p");
 }
 
 /**
