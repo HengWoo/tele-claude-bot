@@ -3,6 +3,17 @@ const client = require('../lib/client');
 const { smartParse, extractTableId } = require('../lib/parser');
 const { output, outputTable, outputRecords, handleError } = require('../lib/output');
 
+/**
+ * Parse JSON option with helpful error message
+ */
+function parseJson(value, optionName) {
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    throw new Error(`Invalid JSON in --${optionName}: ${e.message}`);
+  }
+}
+
 const bitable = new Command('bitable')
   .alias('base')
   .description('Bitable operations (bitable:app scope)');
@@ -140,10 +151,10 @@ bitable
       };
 
       if (options.filter) {
-        data.filter = JSON.parse(options.filter);
+        data.filter = parseJson(options.filter, 'filter');
       }
       if (options.sort) {
-        data.sort = JSON.parse(options.sort);
+        data.sort = parseJson(options.sort, 'sort');
       }
       if (options.fields) {
         data.field_names = options.fields.split(',').map(f => f.trim());
@@ -174,7 +185,7 @@ bitable
   .action(async (appToken, tableId, options) => {
     try {
       const token = smartParse(appToken, 'bitable');
-      const fields = JSON.parse(options.data);
+      const fields = parseJson(options.data, 'data');
 
       const res = await client.bitable.v1.appTableRecord.create({
         path: { app_token: token, table_id: tableId },
@@ -200,7 +211,7 @@ bitable
   .action(async (appToken, tableId, recordId, options) => {
     try {
       const token = smartParse(appToken, 'bitable');
-      const fields = JSON.parse(options.data);
+      const fields = parseJson(options.data, 'data');
 
       const res = await client.bitable.v1.appTableRecord.update({
         path: { app_token: token, table_id: tableId, record_id: recordId },

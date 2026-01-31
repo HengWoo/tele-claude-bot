@@ -68,12 +68,6 @@ sheet
     try {
       const token = smartParse(spreadsheetToken, 'sheets');
 
-      const res = await client.sheets.v2.spreadsheetSheetFilterView.query({
-        path: { spreadsheet_token: token },
-        params: { range },
-      });
-
-      // Fallback to direct range query
       const rangeRes = await client.request({
         method: 'GET',
         url: `https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/${token}/values/${encodeURIComponent(range)}`,
