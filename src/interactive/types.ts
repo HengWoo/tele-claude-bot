@@ -67,6 +67,8 @@ export interface PendingPrompt {
   toggledIndices?: Set<number>;
   /** For "Other": waiting for custom text input */
   awaitingTextInput?: boolean;
+  /** Current cursor position in the terminal prompt */
+  cursorPosition?: number;
 }
 
 /**

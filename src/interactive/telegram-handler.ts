@@ -9,7 +9,8 @@ import { InlineKeyboard } from "grammy";
 import type { Bot, Context } from "grammy";
 import type { BotContext } from "../types.js";
 import type { DetectedPrompt, PendingPrompt, PromptResponse } from "./types.js";
-import { selectOptionByIndex, toggleOption, submitMultiSelect, sendLiteralText } from "../tmux/index.js";
+import { selectOptionByIndex, toggleOption, submitMultiSelect, sendLiteralText, sendNavigationKey, capturePane } from "../tmux/index.js";
+import { getCurrentSelections } from "./prompt-parser.js";
 import { createChildLogger } from "../utils/logger.js";
 
 const logger = createChildLogger("telegram-interactive");
@@ -214,9 +215,16 @@ export class TelegramInteractiveHandler {
       return;
     }
 
+    // Validate option index bounds
+    if (optionIndex < 0 || optionIndex >= pending.prompt.options.length) {
+      await ctx.answerCallbackQuery({ text: "Invalid option" });
+      return;
+    }
+
     try {
       // Inject selection into tmux
-      await selectOptionByIndex(pending.target, optionIndex);
+      await selectOptionByIndex(pending.target, optionIndex, pending.cursorPosition ?? 0);
+      pending.cursorPosition = optionIndex;
 
       // Resolve the promise
       const response: PromptResponse = {
@@ -267,15 +275,31 @@ export class TelegramInteractiveHandler {
       return;
     }
 
-    try {
-      // Toggle in tmux
-      await toggleOption(pending.target, optionIndex);
+    // Validate option index bounds
+    if (optionIndex < 0 || optionIndex >= pending.prompt.options.length) {
+      await ctx.answerCallbackQuery({ text: "Invalid option" });
+      return;
+    }
 
-      // Update our tracking
-      if (pending.toggledIndices.has(optionIndex)) {
-        pending.toggledIndices.delete(optionIndex);
+    try {
+      // Toggle in tmux with current cursor position
+      await toggleOption(pending.target, optionIndex, pending.cursorPosition ?? 0);
+      pending.cursorPosition = optionIndex;
+
+      // Sync state from terminal to avoid desynchronization
+      const terminalOutput = await capturePane(pending.target, 50);
+      const terminalSelections = getCurrentSelections(terminalOutput);
+
+      if (terminalSelections) {
+        // Use terminal state as source of truth
+        pending.toggledIndices = new Set(terminalSelections);
       } else {
-        pending.toggledIndices.add(optionIndex);
+        // Fallback: update our tracking optimistically
+        if (pending.toggledIndices.has(optionIndex)) {
+          pending.toggledIndices.delete(optionIndex);
+        } else {
+          pending.toggledIndices.add(optionIndex);
+        }
       }
 
       // Rebuild keyboard with updated state
@@ -405,9 +429,21 @@ export class TelegramInteractiveHandler {
       );
 
       if (otherIndex >= 0) {
-        await selectOptionByIndex(pending.target, otherIndex);
-        // Wait a bit for "Other" input prompt to appear
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await selectOptionByIndex(pending.target, otherIndex, pending.cursorPosition ?? 0);
+
+        // Poll for "Other" input prompt to appear (up to 2 seconds)
+        const maxWait = 2000;
+        const pollInterval = 100;
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < maxWait) {
+          const output = await capturePane(pending.target, 30);
+          // Look for input prompt indicators (no more option markers visible)
+          if (!output.includes("○") && !output.includes("●") && !output.includes("☐") && !output.includes("☑")) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        }
       }
 
       // Send the custom text
@@ -475,6 +511,14 @@ export class TelegramInteractiveHandler {
     }
 
     logger.info({ promptKey }, "Prompt timed out");
+
+    // Send Escape to cancel the prompt in Claude Code
+    try {
+      await sendNavigationKey(pending.target, "Escape");
+      logger.debug({ target: pending.target }, "Sent Escape to cancel prompt");
+    } catch (error) {
+      logger.warn({ error: (error as Error).message }, "Failed to send Escape key");
+    }
 
     this.resolvePrompt(promptKey, null);
 

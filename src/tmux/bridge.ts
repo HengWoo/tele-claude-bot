@@ -348,7 +348,7 @@ export class TmuxBridge {
     let lastOutput = "";
     const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
     let lastPromptCheck = 0;
-    const PROMPT_CHECK_INTERVAL_MS = 1000; // Check for prompts every second
+    const PROMPT_CHECK_INTERVAL_MS = 500; // Check for prompts every 500ms for better UX
 
     // Use pane ID for file naming (stable across pane position changes)
     const doneFile = getDoneFilePath(this.platform, paneId);
