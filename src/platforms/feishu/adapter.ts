@@ -30,6 +30,14 @@ import { FeishuClient } from "./client.js";
 import { FeishuWebhookServer, type MessageReceiveEvent, type CardActionEvent } from "./server.js";
 import { markdownToPlainText, truncateForFeishu, buildInteractiveCard } from "./formatter.js";
 import { createChildLogger } from "../../utils/logger.js";
+import {
+  auditMessageReceived,
+  auditCommandExecuted,
+  auditFileReceived,
+  auditAuthDenied,
+  auditRateLimited,
+} from "../../utils/audit.js";
+import { RateLimiter } from "../../utils/rate-limiter.js";
 
 const logger = createChildLogger("feishu-adapter");
 
@@ -49,12 +57,18 @@ export class FeishuAdapter implements PlatformAdapter {
   private callbackHandlers: Array<{ pattern: RegExp; handler: CallbackHandler }> = [];
   private fileHandlers: FileHandler[] = [];
   private downloadDir: string;
+  private rateLimiter: RateLimiter | null = null;
 
   constructor(config: FeishuConfig) {
     this.config = config;
     this.client = new FeishuClient(config);
     this.server = new FeishuWebhookServer(config);
     this.downloadDir = join(process.cwd(), "data", "feishu-downloads");
+
+    // Initialize rate limiter if configured
+    if (config.rateLimit?.messagesPerMinute) {
+      this.rateLimiter = new RateLimiter(config.rateLimit.messagesPerMinute);
+    }
 
     // Ensure download directory exists
     if (!existsSync(this.downloadDir)) {
@@ -75,11 +89,46 @@ export class FeishuAdapter implements PlatformAdapter {
     // Handle incoming messages
     this.server.onMessageReceive(async (event: MessageReceiveEvent) => {
       const senderId = event.event.sender.sender_id.open_id;
+      const chatId = event.event.message.chat_id;
 
       // Check authorization
       if (!senderId || !this.isUserAuthorized(senderId)) {
         logger.warn({ senderId }, "Unauthorized Feishu user");
+        auditAuthDenied("feishu", senderId || "unknown", chatId, "not_in_allowed_users");
+
+        // Send rejection message
+        if (chatId) {
+          try {
+            await this.client.sendText(
+              chatId,
+              "Sorry, you are not authorized to use this bot. Please contact the administrator."
+            );
+          } catch (error) {
+            logger.warn({ error: (error as Error).message }, "Failed to send auth denial message");
+          }
+        }
         return;
+      }
+
+      // Check rate limiting
+      if (this.rateLimiter) {
+        const result = this.rateLimiter.check(senderId);
+        if (!result.allowed) {
+          auditRateLimited("feishu", senderId, chatId, result.retryAfter || 60);
+
+          // Only send warning on first rate limit hit to avoid spam
+          if (this.rateLimiter.shouldWarn(senderId)) {
+            try {
+              await this.client.sendText(
+                chatId,
+                `Slow down! You're sending too many messages. Please wait ${result.retryAfter} seconds.`
+              );
+            } catch (error) {
+              logger.warn({ error: (error as Error).message }, "Failed to send rate limit message");
+            }
+          }
+          return;
+        }
       }
 
       const message = event.event.message;
@@ -111,7 +160,7 @@ export class FeishuAdapter implements PlatformAdapter {
         }
       } else if (message.message_type === "image" || message.message_type === "file") {
         // Handle file messages
-        await this.handleFileMessage(event);
+        await this.handleFileMessage(event, senderId);
         return;
       }
 
@@ -125,6 +174,7 @@ export class FeishuAdapter implements PlatformAdapter {
       if (parsed) {
         const handler = this.commandHandlers.get(parsed.command);
         if (handler) {
+          auditCommandExecuted("feishu", senderId, message.chat_id, parsed.command);
           const commandEvent: CommandEvent = {
             type: "command",
             platform: "feishu",
@@ -137,7 +187,8 @@ export class FeishuAdapter implements PlatformAdapter {
         }
       }
 
-      // Regular message
+      // Regular message - audit and process
+      auditMessageReceived("feishu", senderId, message.chat_id, textContent.length);
       const messageEvent: MessageEvent = {
         type: "message",
         platform: "feishu",
@@ -157,6 +208,15 @@ export class FeishuAdapter implements PlatformAdapter {
       if (!this.isUserAuthorized(senderId)) {
         logger.warn({ senderId }, "Unauthorized card action");
         return { toast: { type: "error", content: "Unauthorized" } };
+      }
+
+      // Check rate limiting for card actions too
+      if (this.rateLimiter) {
+        const result = this.rateLimiter.check(senderId);
+        if (!result.allowed) {
+          auditRateLimited("feishu", senderId, event.open_chat_id, result.retryAfter || 60);
+          return { toast: { type: "error", content: `Rate limited. Wait ${result.retryAfter}s.` } };
+        }
       }
 
       const actionValue = event.action.value.action || "";
@@ -220,9 +280,8 @@ export class FeishuAdapter implements PlatformAdapter {
       .trim();
   }
 
-  private async handleFileMessage(event: MessageReceiveEvent): Promise<void> {
+  private async handleFileMessage(event: MessageReceiveEvent, senderId: string): Promise<void> {
     const message = event.event.message;
-    const senderId = event.event.sender.sender_id.open_id || "unknown";
 
     let fileKey = "";
     let fileName = "file";
@@ -266,6 +325,9 @@ export class FeishuAdapter implements PlatformAdapter {
       size: 0,
       type: fileType,
     };
+
+    // Audit file receipt
+    auditFileReceived("feishu", senderId, message.chat_id, fileName, fileType);
 
     const platformMessage = this.eventToPlatformMessage(event, `[File: ${fileName}]`);
     platformMessage.files = [file];
@@ -315,15 +377,23 @@ export class FeishuAdapter implements PlatformAdapter {
     await this.server.start();
     this.running = true;
 
-    // Warn if no allowed users configured (auth bypass for testing)
-    if (this.config.allowedUsers.length === 0) {
+    // Warn if allow-all mode is enabled
+    if (this.config.allowAll) {
       logger.warn(
-        "SECURITY: No FEISHU_ALLOWED_USERS configured - all users can interact with the bot. " +
-        "Configure allowed user IDs in production."
+        "SECURITY: FEISHU_ALLOW_ALL=true - all users can interact with the bot. " +
+        "This should only be used for testing."
       );
     }
 
-    logger.info({ port: this.config.webhookPort }, "Feishu adapter started");
+    logger.info(
+      {
+        port: this.config.webhookPort,
+        allowedUsers: this.config.allowedUsers.length,
+        allowAll: this.config.allowAll || false,
+        rateLimit: this.config.rateLimit?.messagesPerMinute || "disabled",
+      },
+      "Feishu adapter started"
+    );
   }
 
   async stop(): Promise<void> {
@@ -402,8 +472,8 @@ export class FeishuAdapter implements PlatformAdapter {
   }
 
   isUserAuthorized(userId: string): boolean {
-    // If no allowed users configured, allow all (for testing)
-    if (this.config.allowedUsers.length === 0) {
+    // Explicit allow-all mode (testing only)
+    if (this.config.allowAll) {
       return true;
     }
     return this.config.allowedUsers.includes(userId);

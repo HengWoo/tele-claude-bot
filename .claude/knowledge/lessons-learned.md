@@ -35,3 +35,33 @@ tmux display-message -t "$TMUX_PANE" -p '...'
 # List all panes with both identifiers
 tmux list-panes -a -F '#{pane_id} -> #{session_name}:#{window_index}.#{pane_index}'
 ```
+
+---
+
+## Team Deployment Considerations
+
+**Date**: 2025-01-31
+
+When deploying a bot for team use (vs personal use), security requirements change significantly.
+
+### Authorization
+- **Personal**: Single user ID hardcoded in env is fine
+- **Team**: Need explicit allow-list; empty list should fail, not allow all
+- Always send rejection messages to unauthorized users (don't silently ignore)
+
+### Audit Trail
+- Log all security-relevant events with structured format
+- Key actions: `message_received`, `command_executed`, `auth_denied`, `rate_limited`
+- Include: platform, userId, chatId, timestamp
+- Useful for: debugging, security review, usage analytics
+
+### Rate Limiting
+- Prevents abuse and runaway costs
+- Sliding window is simpler than token bucket and works well for chat
+- Send warning on first hit, silent drop on subsequent (avoid rate limit spam)
+
+### Future considerations for public exposure:
+- **Webhook signature verification**: Validate requests actually come from Feishu/Telegram
+- **Group chat context isolation**: Ensure users can't see each other's sessions
+- **User management workflow**: Admin commands or web UI for managing allowed users
+- **Encryption at rest**: Session data and audit logs may contain sensitive info
