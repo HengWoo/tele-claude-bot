@@ -416,11 +416,22 @@ export async function sendNavigationKey(target: string, key: NavigationKey): Pro
  * @param targetIndex - Zero-based index of the option to select
  * @param currentIndex - Current cursor position (default: 0)
  */
+// Maximum reasonable option index (prevents infinite loops)
+const MAX_OPTION_INDEX = 100;
+
 export async function selectOptionByIndex(
   target: string,
   targetIndex: number,
   currentIndex = 0
 ): Promise<void> {
+  // Validate bounds to prevent excessive loop iterations
+  if (targetIndex < 0 || targetIndex > MAX_OPTION_INDEX) {
+    throw new Error(`targetIndex out of bounds: ${targetIndex} (must be 0-${MAX_OPTION_INDEX})`);
+  }
+  if (currentIndex < 0 || currentIndex > MAX_OPTION_INDEX) {
+    throw new Error(`currentIndex out of bounds: ${currentIndex} (must be 0-${MAX_OPTION_INDEX})`);
+  }
+
   logger.debug({ target, targetIndex, currentIndex }, "Selecting option by index");
 
   // Calculate number of moves needed
@@ -460,6 +471,14 @@ export async function toggleOption(
   targetIndex: number,
   currentIndex = 0
 ): Promise<void> {
+  // Validate bounds to prevent excessive loop iterations
+  if (targetIndex < 0 || targetIndex > MAX_OPTION_INDEX) {
+    throw new Error(`targetIndex out of bounds: ${targetIndex} (must be 0-${MAX_OPTION_INDEX})`);
+  }
+  if (currentIndex < 0 || currentIndex > MAX_OPTION_INDEX) {
+    throw new Error(`currentIndex out of bounds: ${currentIndex} (must be 0-${MAX_OPTION_INDEX})`);
+  }
+
   logger.debug({ target, targetIndex, currentIndex }, "Toggling option");
 
   // Calculate number of moves needed
@@ -488,6 +507,9 @@ export async function toggleOption(
  * @param target - tmux target
  */
 export async function submitMultiSelect(target: string): Promise<void> {
+  if (!validateTarget(target)) {
+    throw new Error(`Invalid tmux target format: ${target}. Expected format: session:window.pane`);
+  }
   logger.debug({ target }, "Submitting multi-select");
   await sendNavigationKey(target, "Enter");
 }

@@ -582,6 +582,11 @@ export class FeishuInteractiveHandler {
         const startTime = Date.now();
 
         while (Date.now() - startTime < maxWait) {
+          // Check if prompt was cancelled during polling
+          if (!this.pendingPrompts.has(promptKey)) {
+            logger.debug({ userId }, "Prompt cancelled during text input polling");
+            return false;
+          }
           const output = await capturePane(pending.target, 30);
           // Look for input prompt indicators (no more option markers visible)
           if (!output.includes("○") && !output.includes("●") && !output.includes("☐") && !output.includes("☑")) {

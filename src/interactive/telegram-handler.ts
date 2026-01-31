@@ -85,6 +85,11 @@ export class TelegramInteractiveHandler {
     // Convert chatId to number for Telegram API
     const numericChatId = typeof chatId === "string" ? parseInt(chatId, 10) : chatId;
 
+    if (Number.isNaN(numericChatId)) {
+      logger.error({ chatId }, "Invalid chatId - cannot convert to number");
+      return null;
+    }
+
     try {
       // Send prompt message
       const sentMessage = await this.bot.api.sendMessage(numericChatId, messageText, {
@@ -486,6 +491,11 @@ export class TelegramInteractiveHandler {
         const startTime = Date.now();
 
         while (Date.now() - startTime < maxWait) {
+          // Check if prompt was cancelled during polling
+          if (!this.pendingPrompts.has(promptKey)) {
+            logger.debug({ userId }, "Prompt cancelled during text input polling");
+            return false;
+          }
           const output = await capturePane(pending.target, 30);
           // Look for input prompt indicators (no more option markers visible)
           if (!output.includes("○") && !output.includes("●") && !output.includes("☐") && !output.includes("☑")) {
