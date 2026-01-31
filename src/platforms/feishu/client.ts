@@ -232,6 +232,24 @@ export class FeishuClient {
   }
 
   /**
+   * Update/patch an existing interactive card
+   */
+  async updateCard(messageId: string, card: InteractiveCard): Promise<void> {
+    const content = JSON.stringify(card);
+
+    const response = await this.client.im.message.patch({
+      path: { message_id: messageId },
+      data: { content },
+    });
+
+    if (response.code !== 0) {
+      throw new Error(`Failed to update card: ${response.msg}`);
+    }
+
+    logger.debug({ messageId }, "Card updated");
+  }
+
+  /**
    * Delete a message
    */
   async deleteMessage(messageId: string): Promise<void> {
