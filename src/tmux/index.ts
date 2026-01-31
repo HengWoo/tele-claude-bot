@@ -363,3 +363,160 @@ export function formatForTelegram(text: string, useHtml = true): string {
 
   return formatted;
 }
+
+// ============================================================================
+// Interactive Prompt Navigation
+// ============================================================================
+
+/**
+ * Navigation key types for interactive prompts
+ */
+export type NavigationKey = "Up" | "Down" | "Space" | "Enter" | "Escape";
+
+/**
+ * Small delay helper
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Send a navigation key to a tmux pane
+ * Used for navigating interactive prompts (arrow keys, space, enter)
+ *
+ * @param target - tmux target (session:window.pane)
+ * @param key - Key to send
+ */
+export async function sendNavigationKey(target: string, key: NavigationKey): Promise<void> {
+  if (!validateTarget(target)) {
+    throw new Error(`Invalid tmux target format: ${target}. Expected format: session:window.pane`);
+  }
+
+  logger.debug({ target, key }, "Sending navigation key");
+
+  try {
+    await execFileAsync("tmux", ["send-keys", "-t", target, key]);
+    // Small delay to let the UI update
+    await sleep(50);
+  } catch (error) {
+    const err = error as Error;
+    logger.error({ target, key, error: err.message }, "Failed to send navigation key");
+    throw new Error(`Failed to send navigation key to ${target}: ${err.message}`);
+  }
+}
+
+/**
+ * Navigate to and select an option by index in an interactive prompt
+ *
+ * For single-select (radio buttons):
+ * - Navigate to the target index using arrow keys
+ * - Press Enter to confirm selection
+ *
+ * @param target - tmux target
+ * @param targetIndex - Zero-based index of the option to select
+ * @param currentIndex - Current cursor position (default: 0)
+ */
+export async function selectOptionByIndex(
+  target: string,
+  targetIndex: number,
+  currentIndex = 0
+): Promise<void> {
+  logger.debug({ target, targetIndex, currentIndex }, "Selecting option by index");
+
+  // Calculate number of moves needed
+  const moves = targetIndex - currentIndex;
+
+  if (moves > 0) {
+    // Move down
+    for (let i = 0; i < moves; i++) {
+      await sendNavigationKey(target, "Down");
+    }
+  } else if (moves < 0) {
+    // Move up
+    for (let i = 0; i < Math.abs(moves); i++) {
+      await sendNavigationKey(target, "Up");
+    }
+  }
+
+  // Press Enter to confirm
+  await sendNavigationKey(target, "Enter");
+
+  logger.debug({ target, targetIndex }, "Option selected");
+}
+
+/**
+ * Toggle an option in a multi-select prompt
+ *
+ * For multi-select (checkboxes):
+ * - Navigate to the target index
+ * - Press Space to toggle selection
+ *
+ * @param target - tmux target
+ * @param targetIndex - Zero-based index of the option to toggle
+ * @param currentIndex - Current cursor position
+ */
+export async function toggleOption(
+  target: string,
+  targetIndex: number,
+  currentIndex = 0
+): Promise<void> {
+  logger.debug({ target, targetIndex, currentIndex }, "Toggling option");
+
+  // Calculate number of moves needed
+  const moves = targetIndex - currentIndex;
+
+  if (moves > 0) {
+    for (let i = 0; i < moves; i++) {
+      await sendNavigationKey(target, "Down");
+    }
+  } else if (moves < 0) {
+    for (let i = 0; i < Math.abs(moves); i++) {
+      await sendNavigationKey(target, "Up");
+    }
+  }
+
+  // Press Space to toggle
+  await sendNavigationKey(target, "Space");
+
+  logger.debug({ target, targetIndex }, "Option toggled");
+}
+
+/**
+ * Submit a multi-select prompt after toggling options
+ * Just presses Enter to confirm the current selections
+ *
+ * @param target - tmux target
+ */
+export async function submitMultiSelect(target: string): Promise<void> {
+  logger.debug({ target }, "Submitting multi-select");
+  await sendNavigationKey(target, "Enter");
+}
+
+/**
+ * Send literal text for "Other" option input
+ * Used when user selects "Other" and needs to type custom text
+ *
+ * @param target - tmux target
+ * @param text - Text to send
+ */
+export async function sendLiteralText(target: string, text: string): Promise<void> {
+  if (!validateTarget(target)) {
+    throw new Error(`Invalid tmux target format: ${target}. Expected format: session:window.pane`);
+  }
+
+  logger.debug({ target, textLength: text.length }, "Sending literal text for Other input");
+
+  try {
+    // Send text with -l (literal mode) to avoid key interpretation
+    await execFileAsync("tmux", ["send-keys", "-t", target, "-l", text]);
+    await sleep(50);
+    // Send Enter to submit
+    await execFileAsync("tmux", ["send-keys", "-t", target, "Enter"]);
+
+    logger.debug({ target }, "Literal text sent");
+  } catch (error) {
+    const err = error as Error;
+    logger.error({ target, error: err.message }, "Failed to send literal text");
+    throw new Error(`Failed to send literal text to ${target}: ${err.message}`);
+  }
+}

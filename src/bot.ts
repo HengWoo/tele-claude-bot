@@ -22,6 +22,18 @@ export const bot = new Bot<BotContext>(config.telegram.token);
 let sessionManager: SessionManager | null = null;
 let claudeBridge: ClaudeBridge | null = null;
 
+// Text interceptor for interactive prompts (set by telegram-main.ts)
+let textInterceptor: ((userId: number, text: string) => Promise<boolean>) | null = null;
+
+/**
+ * Set a text interceptor that runs before normal message handling
+ * Returns true if the message was handled (skip normal processing)
+ */
+export function setTextInterceptor(handler: (userId: number, text: string) => Promise<boolean>): void {
+  textInterceptor = handler;
+  logger.info("Text interceptor registered");
+}
+
 /**
  * Middleware: Authentication check
  * Rejects messages from users not in the allowed list
@@ -180,10 +192,20 @@ function registerMessageHandlers(): void {
   // Handle text messages
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
+    const userId = ctx.from?.id;
 
     // Skip if it's a command (already handled by command handlers)
     if (text.startsWith("/")) {
       return;
+    }
+
+    // Check text interceptor first (for interactive prompt responses)
+    if (textInterceptor && userId) {
+      const handled = await textInterceptor(userId, text);
+      if (handled) {
+        logger.debug({ userId }, "Text intercepted by interactive handler");
+        return;
+      }
     }
 
     if (!sessionManager || !claudeBridge) {
