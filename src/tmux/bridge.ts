@@ -6,6 +6,7 @@ import { formatToHtml, truncateHtml } from "../utils/telegram-formatter.js";
 import { createChildLogger } from "../utils/logger.js";
 import type { PlatformType } from "../platforms/types.js";
 import { detectAskUserPrompt } from "../interactive/prompt-parser.js";
+import { PromptDeduplicator } from "../interactive/prompt-dedup.js";
 import type { InteractiveCallback } from "../interactive/types.js";
 
 const logger = createChildLogger("tmux-bridge");
@@ -350,6 +351,9 @@ export class TmuxBridge {
     let lastPromptCheck = 0;
     const PROMPT_CHECK_INTERVAL_MS = 500; // Check for prompts every 500ms for better UX
 
+    // Deduplicator prevents same prompt from triggering callback multiple times
+    const promptDedup = new PromptDeduplicator();
+
     // Use pane ID for file naming (stable across pane position changes)
     const doneFile = getDoneFilePath(this.platform, paneId);
     const responseFile = getResponseFilePath(this.platform, paneId);
@@ -429,9 +433,9 @@ export class TmuxBridge {
       if (now - lastPromptCheck >= PROMPT_CHECK_INTERVAL_MS && this.interactiveCallback && userId && chatId) {
         lastPromptCheck = now;
 
-        // Detect AskUserQuestion prompt
+        // Detect AskUserQuestion prompt (with deduplication)
         const prompt = detectAskUserPrompt(currentOutput);
-        if (prompt) {
+        if (prompt && promptDedup.shouldHandle(prompt)) {
           logger.info(
             { userId, question: prompt.question, optionCount: prompt.options.length, type: prompt.type },
             "Interactive prompt detected"
@@ -449,6 +453,10 @@ export class TmuxBridge {
             }
           } catch (error) {
             logger.error({ error: (error as Error).message, userId }, "Error handling interactive prompt");
+          } finally {
+            // Clear deduplicator after callback completes (success, cancel, or error)
+            // This allows a new prompt to be detected if Claude asks another question
+            promptDedup.clear();
           }
 
           // Continue polling - the response will result in done file being created eventually

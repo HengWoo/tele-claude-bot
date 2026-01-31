@@ -544,6 +544,20 @@ export class FeishuInteractiveHandler {
       return true;
     } catch (error) {
       logger.error({ error: (error as Error).message, userId }, "Failed to send custom text");
+
+      // Send error feedback to user
+      try {
+        await this.adapter.sendMessage(
+          pending.chatId,
+          "Failed to send your response to Claude. Please try again or click Cancel."
+        );
+      } catch (msgError) {
+        logger.warn({ error: (msgError as Error).message }, "Failed to send error message");
+      }
+
+      // Reset awaiting flag so user can retry
+      pending.awaitingTextInput = false;
+
       return false;
     }
   }

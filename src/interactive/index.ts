@@ -6,5 +6,6 @@
 
 export * from "./types.js";
 export * from "./prompt-parser.js";
+export * from "./prompt-dedup.js";
 export { TelegramInteractiveHandler } from "./telegram-handler.js";
 export { FeishuInteractiveHandler } from "./feishu-handler.js";
