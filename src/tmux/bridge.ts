@@ -1,10 +1,12 @@
 import { existsSync, writeFileSync, unlinkSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { sendKeys, capturePane, formatForTelegram, paneExists, getPaneInfo, getPaneId, sanitizePaneId, stripAnsi } from "./index.js";
+import { sendKeys, capturePane, formatForTelegram, paneExists, getPaneInfo, sanitizePaneId, stripAnsi } from "./index.js";
 import { formatToHtml, truncateHtml } from "../utils/telegram-formatter.js";
 import { createChildLogger } from "../utils/logger.js";
 import type { PlatformType } from "../platforms/types.js";
+import { detectAskUserPrompt } from "../interactive/prompt-parser.js";
+import type { InteractiveCallback } from "../interactive/types.js";
 
 const logger = createChildLogger("tmux-bridge");
 
@@ -98,6 +100,7 @@ export class TmuxBridge {
     userTargets: new Map(),
     pendingRequests: new Map(),
   };
+  private interactiveCallback: InteractiveCallback | null = null;
 
   constructor(platform: Platform) {
     this.platform = platform;
@@ -107,6 +110,15 @@ export class TmuxBridge {
     // Load persisted state on startup
     this.loadPersistedState();
     logger.info({ platform }, "TmuxBridge initialized");
+  }
+
+  /**
+   * Set callback for handling interactive prompts (AskUserQuestion)
+   * The callback is invoked when a prompt is detected in terminal output
+   */
+  setInteractiveCallback(callback: InteractiveCallback): void {
+    this.interactiveCallback = callback;
+    logger.info({ platform: this.platform }, "Interactive callback registered");
   }
 
   /**
@@ -309,7 +321,7 @@ export class TmuxBridge {
       await sendKeys(target, message);
 
       // Wait for completion - pass pending request and pane ID for file operations
-      const response = await this.waitForCompletion(target, paneId, beforeLineCount, timeout, pending, message);
+      const response = await this.waitForCompletion(target, paneId, beforeLineCount, timeout, pending, message, userId, chatId);
 
       return response;
     } finally {
@@ -328,11 +340,15 @@ export class TmuxBridge {
     startLineCount: number,
     timeout: number,
     pendingRequest: PendingRequest,
-    userMessage?: string
+    userMessage?: string,
+    userId?: string,
+    chatId?: number
   ): Promise<string> {
     const startTime = Date.now();
     let lastOutput = "";
     const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+    let lastPromptCheck = 0;
+    const PROMPT_CHECK_INTERVAL_MS = 1000; // Check for prompts every second
 
     // Use pane ID for file naming (stable across pane position changes)
     const doneFile = getDoneFilePath(this.platform, paneId);
@@ -406,6 +422,37 @@ export class TmuxBridge {
       if (currentOutput !== lastOutput) {
         lastOutput = currentOutput;
         // Reset the timeout on activity (Claude is still working)
+      }
+
+      // Check for interactive prompts periodically
+      const now = Date.now();
+      if (now - lastPromptCheck >= PROMPT_CHECK_INTERVAL_MS && this.interactiveCallback && userId && chatId) {
+        lastPromptCheck = now;
+
+        // Detect AskUserQuestion prompt
+        const prompt = detectAskUserPrompt(currentOutput);
+        if (prompt) {
+          logger.info(
+            { userId, question: prompt.question, optionCount: prompt.options.length, type: prompt.type },
+            "Interactive prompt detected"
+          );
+
+          try {
+            // Invoke callback to show prompt to user and get response
+            const response = await this.interactiveCallback(prompt, userId, paneId, target, chatId);
+
+            if (response) {
+              logger.info({ userId, selectedIndices: response.selectedIndices, isOther: response.isOther }, "User responded to prompt");
+              // Response injection is handled by the handler via tmux navigation methods
+            } else {
+              logger.info({ userId }, "User did not respond to prompt (cancelled or timed out)");
+            }
+          } catch (error) {
+            logger.error({ error: (error as Error).message, userId }, "Error handling interactive prompt");
+          }
+
+          // Continue polling - the response will result in done file being created eventually
+        }
       }
 
       await this.sleep(500);

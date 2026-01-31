@@ -14,6 +14,7 @@ import type { Session } from "./types.js";
 import { getTmuxBridge, type Platform } from "./tmux/bridge.js";
 import { FeishuAdapter } from "./platforms/feishu/index.js";
 import { cleanupStalePendingFiles } from "./approval/index.js";
+import { FeishuInteractiveHandler } from "./interactive/index.js";
 
 const logger = createChildLogger("feishu-main");
 const PLATFORM: Platform = "feishu";
@@ -23,6 +24,7 @@ let isShuttingDown = false;
 
 // Service references for shutdown
 let feishuAdapter: FeishuAdapter | null = null;
+let interactiveHandler: FeishuInteractiveHandler | null = null;
 
 async function shutdown(signal: string): Promise<void> {
   if (isShuttingDown) return;
@@ -31,6 +33,12 @@ async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, "Received shutdown signal");
 
   try {
+    // Stop the interactive handler
+    if (interactiveHandler) {
+      await interactiveHandler.cleanup();
+      logger.info("Interactive handler stopped");
+    }
+
     // Stop the Feishu adapter
     if (feishuAdapter) {
       await feishuAdapter.stop();
@@ -167,6 +175,15 @@ function setupFeishuHandlers(
     const chatId = event.message.chat.id;
 
     if (!text.trim()) return;
+
+    // Check if this is a response to an "Other" prompt (custom text input)
+    if (interactiveHandler?.isAwaitingTextInput(userId)) {
+      const handled = await interactiveHandler.handleTextInput(userId, text);
+      if (handled) {
+        logger.info({ userId }, "Handled custom text input for interactive prompt");
+        return;
+      }
+    }
 
     logger.info({ userId, messageLength: text.length, platform: PLATFORM }, "Processing Feishu message");
 
@@ -358,6 +375,18 @@ async function main(): Promise<void> {
 
     // Start Feishu adapter
     feishuAdapter = new FeishuAdapter(config.feishu);
+
+    // Initialize interactive handler for AskUserQuestion prompts
+    interactiveHandler = new FeishuInteractiveHandler(feishuAdapter);
+
+    // Register interactive callback on tmux bridge
+    const bridge = getTmuxBridge(PLATFORM);
+    bridge.setInteractiveCallback(async (prompt, userId, paneId, target, chatId) => {
+      if (!interactiveHandler) return null;
+      // Feishu uses string chat IDs
+      return interactiveHandler.showPrompt(prompt, userId, paneId, target, String(chatId));
+    });
+    logger.info("Interactive prompt handler initialized");
 
     // Register Feishu message handlers
     setupFeishuHandlers(feishuAdapter, sessionManagerAdapter, claudeBridgeAdapter);

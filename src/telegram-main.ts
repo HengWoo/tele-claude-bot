@@ -8,7 +8,7 @@ import "dotenv/config";
 import { existsSync, copyFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
-import { initializeBot, startBot, stopBot, bot } from "./bot.js";
+import { initializeBot, startBot, stopBot, bot, setTextInterceptor } from "./bot.js";
 import { getConfig } from "./config.js";
 import { createSessionManager } from "./sessions/manager.js";
 import { approvalQueue } from "./claude/bridge.js";
@@ -19,6 +19,7 @@ import { ApprovalService, cleanupStalePendingFiles, VetoWatcher } from "./approv
 import { Scheduler } from "./scheduler/index.js";
 import { registerScheduleCommands } from "./handlers/schedule.js";
 import { setApprovalHandler, registerCallbackHandlers } from "./handlers/callbacks.js";
+import { TelegramInteractiveHandler } from "./interactive/index.js";
 
 const logger = createChildLogger("telegram-main");
 const PLATFORM: Platform = "telegram";
@@ -30,6 +31,7 @@ let isShuttingDown = false;
 let approvalService: ApprovalService | null = null;
 let vetoWatcher: VetoWatcher | null = null;
 let scheduler: Scheduler | null = null;
+let interactiveHandler: TelegramInteractiveHandler | null = null;
 
 /**
  * Migrate legacy state files to new platform-specific names
@@ -86,6 +88,12 @@ async function shutdown(signal: string): Promise<void> {
     if (scheduler) {
       scheduler.stop();
       logger.info("Scheduler stopped");
+    }
+
+    // Stop the interactive handler
+    if (interactiveHandler) {
+      await interactiveHandler.cleanup();
+      logger.info("Interactive handler stopped");
     }
 
     // Stop the approval service
@@ -273,6 +281,25 @@ async function main(): Promise<void> {
 
     // Register callback handlers (including hook approval callbacks)
     registerCallbackHandlers(bot);
+
+    // Initialize interactive handler for AskUserQuestion prompts
+    interactiveHandler = new TelegramInteractiveHandler(bot);
+
+    // Register interactive callback on tmux bridge
+    const bridge = getTmuxBridge(PLATFORM);
+    bridge.setInteractiveCallback(async (prompt, userId, paneId, target, chatId) => {
+      if (!interactiveHandler) return null;
+      return interactiveHandler.showPrompt(prompt, userId, paneId, target, chatId);
+    });
+
+    // Register text interceptor for "Other" option custom text input
+    setTextInterceptor(async (userId: number, text: string) => {
+      if (!interactiveHandler) return false;
+      if (!interactiveHandler.isAwaitingTextInput(String(userId))) return false;
+      return interactiveHandler.handleTextInput(String(userId), text);
+    });
+
+    logger.info("Interactive prompt handler initialized");
 
     // Initialize and start bot (pass real sessionManager for command registration)
     initializeBot(sessionManagerAdapter, claudeBridgeAdapter, sessionManager);
