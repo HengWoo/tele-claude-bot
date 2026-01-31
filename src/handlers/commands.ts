@@ -487,9 +487,10 @@ export async function handleAttachCommand(
   }
 
   const bridge = getTmuxBridge(PLATFORM);
+  const userIdStr = String(userId);
 
   try {
-    await bridge.attach(target);
+    await bridge.attach(target, userIdStr);
     logger.info({ userId, target }, "Attached to tmux pane");
 
     await ctx.reply(
@@ -512,18 +513,19 @@ export async function handleDetachCommand(
   _sessionManager: SessionManager
 ): Promise<void> {
   const userId = ctx.from?.id;
+  const userIdStr = String(userId);
 
   logger.debug({ userId }, "Detach command");
 
   const bridge = getTmuxBridge(PLATFORM);
-  const currentTarget = bridge.getAttachedTarget();
+  const currentTarget = bridge.getAttachedTarget(userIdStr);
 
   if (!currentTarget) {
     await ctx.reply("Not currently attached to any tmux pane.");
     return;
   }
 
-  bridge.detach();
+  bridge.detach(userIdStr);
   logger.info({ userId, previousTarget: currentTarget }, "Detached from tmux pane");
 
   await ctx.reply(`Detached from tmux pane: ${currentTarget}`);
@@ -589,6 +591,7 @@ export async function handlePanesCommand(
   }
 
   const claudePanes = await findClaudePanes();
+  const userIdStr = String(userId);
 
   if (claudePanes.length === 0) {
     await ctx.reply(
@@ -600,7 +603,7 @@ export async function handlePanesCommand(
   }
 
   const bridge = getTmuxBridge(PLATFORM);
-  const currentTarget = bridge.getAttachedTarget();
+  const currentTarget = bridge.getAttachedTarget(userIdStr);
 
   // Create inline keyboard for quick attachment
   const keyboard = new InlineKeyboard();
@@ -637,12 +640,13 @@ export async function handleStatusCommand(
   sessionManager: SessionManager
 ): Promise<void> {
   const userId = ctx.from?.id;
+  const userIdStr = String(userId);
 
   logger.debug({ userId }, "Status command");
 
   const bridge = getTmuxBridge(PLATFORM);
-  const attachedTarget = bridge.getAttachedTarget();
-  const hasPending = bridge.hasPendingRequest();
+  const attachedTarget = bridge.getAttachedTarget(userIdStr);
+  const hasPending = bridge.hasPendingRequest(userIdStr);
 
   const activeSession = await sessionManager.getActive();
 
@@ -676,6 +680,7 @@ export async function handleAttachCallback(
 ): Promise<void> {
   const callbackData = ctx.callbackQuery?.data;
   const userId = ctx.from?.id;
+  const userIdStr = String(userId);
 
   if (!callbackData?.startsWith("attach:")) {
     return;
@@ -688,7 +693,7 @@ export async function handleAttachCallback(
   const bridge = getTmuxBridge(PLATFORM);
 
   try {
-    await bridge.attach(target);
+    await bridge.attach(target, userIdStr);
 
     await ctx.answerCallbackQuery({
       text: `Attached to ${target}`,

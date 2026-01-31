@@ -106,6 +106,7 @@ process.on("uncaughtException", (error) => {
  *
  * This adapter uses the tmux bridge to inject messages into existing
  * Claude Code sessions running in tmux panes.
+ * Supports per-user targeting - each user has their own tmux session.
  */
 function createClaudeBridgeAdapter(platform: Platform = DEFAULT_PLATFORM) {
   const bridge = getTmuxBridge(platform);
@@ -114,20 +115,22 @@ function createClaudeBridgeAdapter(platform: Platform = DEFAULT_PLATFORM) {
     async *sendMessage(
       _session: Session,
       message: string,
+      userId: string,
       chatId?: number,
       messageId?: number
     ): AsyncGenerator<string> {
-      if (!bridge.isAttached()) {
+      if (!bridge.isAttached(userId)) {
         yield "Not attached to any tmux pane.\n\nUse /attach <target> to connect to a Claude session.\nUse /panes to see available Claude panes.";
         return;
       }
 
       try {
         const config = getConfig();
-        logger.info({ message: message.slice(0, 100) }, "Sending message via tmux bridge");
+        logger.info({ userId, message: message.slice(0, 100) }, "Sending message via tmux bridge");
 
         const response = await bridge.sendMessage(
           message,
+          userId,
           chatId ?? 0,
           messageId ?? 0,
           config.claude.timeout
@@ -141,8 +144,8 @@ function createClaudeBridgeAdapter(platform: Platform = DEFAULT_PLATFORM) {
       }
     },
 
-    isSessionActive(_session: Session): boolean {
-      return bridge.isAttached();
+    isSessionActive(_session: Session, userId: string): boolean {
+      return bridge.isAttached(userId);
     },
 
     // Expose the bridge for direct access if needed
@@ -340,8 +343,8 @@ function setupFeishuHandlers(
 
       session.lastUsed = Date.now();
 
-      // Check if Claude is attached
-      if (!claudeBridge.isSessionActive(session)) {
+      // Check if Claude is attached (per-user targeting)
+      if (!claudeBridge.isSessionActive(session, userId)) {
         await adapter.sendMessage(chatId, "Not attached to any tmux pane.\n\nUse /attach <target> to connect to a Claude session.");
         return;
       }
@@ -349,9 +352,9 @@ function setupFeishuHandlers(
       // Send initial "thinking" message
       const initialMsg = await adapter.sendMessage(chatId, "...");
 
-      // Get response from Claude
+      // Get response from Claude (pass userId for per-user targeting)
       let fullResponse = "";
-      for await (const chunk of claudeBridge.sendMessage(session, text)) {
+      for await (const chunk of claudeBridge.sendMessage(session, text, userId)) {
         fullResponse += chunk;
       }
 
@@ -411,9 +414,10 @@ function setupFeishuHandlers(
   });
 
   adapter.onCommand("status", async (event) => {
+    const userId = event.message.from.id;
     const bridge = getTmuxBridge("feishu");
-    const attachedTarget = bridge.getAttachedTarget();
-    const hasPending = bridge.hasPendingRequest();
+    const attachedTarget = bridge.getAttachedTarget(userId);
+    const hasPending = bridge.hasPendingRequest(userId);
 
     let message = "Status:\n\n";
     if (attachedTarget) {
@@ -428,6 +432,7 @@ function setupFeishuHandlers(
   });
 
   adapter.onCommand("attach", async (event) => {
+    const userId = event.message.from.id;
     const target = event.command.rawArgs.trim();
     if (!target) {
       await adapter.sendMessage(
@@ -439,7 +444,7 @@ function setupFeishuHandlers(
 
     const bridge = getTmuxBridge("feishu");
     try {
-      await bridge.attach(target);
+      await bridge.attach(target, userId);
       await adapter.sendMessage(
         event.message.chat.id,
         `Attached to tmux pane: ${target}\n\nYou can now send messages to Claude.`
@@ -451,15 +456,16 @@ function setupFeishuHandlers(
   });
 
   adapter.onCommand("detach", async (event) => {
+    const userId = event.message.from.id;
     const bridge = getTmuxBridge("feishu");
-    const currentTarget = bridge.getAttachedTarget();
+    const currentTarget = bridge.getAttachedTarget(userId);
 
     if (!currentTarget) {
       await adapter.sendMessage(event.message.chat.id, "Not currently attached to any tmux pane.");
       return;
     }
 
-    bridge.detach();
+    bridge.detach(userId);
     await adapter.sendMessage(event.message.chat.id, `Detached from tmux pane: ${currentTarget}`);
   });
 

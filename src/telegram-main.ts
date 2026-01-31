@@ -132,6 +132,7 @@ process.on("uncaughtException", (error) => {
 /**
  * Claude bridge adapter that implements the ClaudeBridge interface
  * expected by the message handler.
+ * Supports per-user targeting - each user has their own tmux session.
  */
 function createClaudeBridgeAdapter() {
   const bridge = getTmuxBridge(PLATFORM);
@@ -140,20 +141,22 @@ function createClaudeBridgeAdapter() {
     async *sendMessage(
       _session: Session,
       message: string,
+      userId: string,
       chatId?: number,
       messageId?: number
     ): AsyncGenerator<string> {
-      if (!bridge.isAttached()) {
+      if (!bridge.isAttached(userId)) {
         yield "Not attached to any tmux pane.\n\nUse /attach <target> to connect to a Claude session.\nUse /panes to see available Claude panes.";
         return;
       }
 
       try {
         const config = getConfig();
-        logger.info({ message: message.slice(0, 100) }, "Sending message via tmux bridge");
+        logger.info({ userId, message: message.slice(0, 100) }, "Sending message via tmux bridge");
 
         const response = await bridge.sendMessage(
           message,
+          userId,
           chatId ?? 0,
           messageId ?? 0,
           config.claude.timeout
@@ -167,8 +170,8 @@ function createClaudeBridgeAdapter() {
       }
     },
 
-    isSessionActive(_session: Session): boolean {
-      return bridge.isAttached();
+    isSessionActive(_session: Session, userId: string): boolean {
+      return bridge.isAttached(userId);
     },
 
     // Expose the bridge for direct access if needed
