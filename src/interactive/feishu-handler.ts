@@ -129,6 +129,20 @@ export class FeishuInteractiveHandler {
       });
     } catch (error) {
       logger.error({ error: (error as Error).message, userId, chatId }, "Failed to send prompt card");
+
+      // Fallback: notify user via plain text so they know Claude is waiting
+      try {
+        const optionList = prompt.options
+          .map((opt, i) => `${i + 1}. ${opt.label}`)
+          .join("\n");
+        await this.adapter.sendMessage(
+          chatId,
+          `Claude is asking: "${prompt.question}"\n\nOptions:\n${optionList}\n\nFailed to show interactive card. Please check the terminal directly.`
+        );
+      } catch (msgError) {
+        logger.warn({ error: (msgError as Error).message }, "Failed to send fallback message");
+      }
+
       return null;
     }
   }

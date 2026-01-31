@@ -199,7 +199,11 @@ export class TelegramInteractiveHandler {
    */
   private async handleSelect(ctx: Context): Promise<void> {
     const data = ctx.callbackQuery?.data;
-    if (!data) return;
+    if (!data) {
+      logger.warn({ callbackQuery: ctx.callbackQuery }, "Select callback received with no data");
+      await ctx.answerCallbackQuery({ text: "Invalid request" });
+      return;
+    }
 
     // Parse: prompt_select:userId:index
     const parts = data.split(":");
@@ -273,7 +277,11 @@ export class TelegramInteractiveHandler {
    */
   private async handleToggle(ctx: Context): Promise<void> {
     const data = ctx.callbackQuery?.data;
-    if (!data) return;
+    if (!data) {
+      logger.warn({ callbackQuery: ctx.callbackQuery }, "Toggle callback received with no data");
+      await ctx.answerCallbackQuery({ text: "Invalid request" });
+      return;
+    }
 
     const parts = data.split(":");
     if (parts.length !== 3) {
@@ -356,7 +364,11 @@ export class TelegramInteractiveHandler {
    */
   private async handleSubmit(ctx: Context): Promise<void> {
     const data = ctx.callbackQuery?.data;
-    if (!data) return;
+    if (!data) {
+      logger.warn({ callbackQuery: ctx.callbackQuery }, "Submit callback received with no data");
+      await ctx.answerCallbackQuery({ text: "Invalid request" });
+      return;
+    }
 
     const parts = data.split(":");
     if (parts.length !== 2) {
@@ -419,7 +431,11 @@ export class TelegramInteractiveHandler {
    */
   private async handleOther(ctx: Context): Promise<void> {
     const data = ctx.callbackQuery?.data;
-    if (!data) return;
+    if (!data) {
+      logger.warn({ callbackQuery: ctx.callbackQuery }, "Other callback received with no data");
+      await ctx.answerCallbackQuery({ text: "Invalid request" });
+      return;
+    }
 
     const parts = data.split(":");
     if (parts.length !== 2) {
@@ -557,7 +573,11 @@ export class TelegramInteractiveHandler {
    */
   private async handleCancel(ctx: Context): Promise<void> {
     const data = ctx.callbackQuery?.data;
-    if (!data) return;
+    if (!data) {
+      logger.warn({ callbackQuery: ctx.callbackQuery }, "Cancel callback received with no data");
+      await ctx.answerCallbackQuery({ text: "Invalid request" });
+      return;
+    }
 
     const parts = data.split(":");
     if (parts.length !== 2) {
